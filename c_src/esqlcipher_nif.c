@@ -14,8 +14,10 @@
  * limitations under the License.
 */
 
+/* adapted for sqlcipher by: Felix Kiunke <dev@fkiunke.de> */
+
 /*
- * sqlite3_nif -- an erlang sqlite nif.
+ * sqlcipher_nif -- an erlang sqlite nif.
 */
 
 #include <erl_nif.h>
@@ -77,7 +79,7 @@ typedef struct {
     ERL_NIF_TERM stmt;
 } esqlite_command;
 
-static ERL_NIF_TERM atom_esqlite3;
+static ERL_NIF_TERM atom_esqlcipher;
 
 static ERL_NIF_TERM push_command(ErlNifEnv *env, esqlite_connection *conn, esqlite_command *cmd);
 
@@ -745,7 +747,7 @@ push_command(ErlNifEnv *env, esqlite_connection *conn, esqlite_command *cmd) {
 static ERL_NIF_TERM
 make_answer(esqlite_command *cmd, ERL_NIF_TERM answer)
 {
-    return enif_make_tuple3(cmd->env, atom_esqlite3, cmd->ref, answer);
+    return enif_make_tuple3(cmd->env, atom_esqlcipher, cmd->ref, answer);
 }
 
 static void *
@@ -1250,20 +1252,20 @@ static int
 on_load(ErlNifEnv* env, void** priv, ERL_NIF_TERM info)
 {
     ErlNifResourceType *rt;
-
-    rt = enif_open_resource_type(env, "esqlite3_nif", "esqlite_connection_type",
+     
+    rt = enif_open_resource_type(env, "esqlcipher_nif", "esqlite_connection_type",
 				destruct_esqlite_connection, ERL_NIF_RT_CREATE, NULL);
     if(!rt)
 	    return -1;
     esqlite_connection_type = rt;
 
-    rt =  enif_open_resource_type(env, "esqlite3_nif", "esqlite_statement_type",
+    rt =  enif_open_resource_type(env, "esqlcipher_nif", "esqlite_statement_type",
 				   destruct_esqlite_statement, ERL_NIF_RT_CREATE, NULL);
     if(!rt)
 	    return -1;
     esqlite_statement_type = rt;
 
-    atom_esqlite3 = make_atom(env, "esqlite3");
+    atom_esqlcipher = make_atom(env, "esqlcipher");
 
     return 0;
 }
@@ -1296,4 +1298,4 @@ static ErlNifFunc nif_funcs[] = {
     {"close", 3, esqlite_close}
 };
 
-ERL_NIF_INIT(esqlite3_nif, nif_funcs, on_load, on_reload, on_upgrade, NULL);
+ERL_NIF_INIT(esqlcipher_nif, nif_funcs, on_load, on_reload, on_upgrade, NULL);

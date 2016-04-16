@@ -1,7 +1,7 @@
 %% @author Maas-Maarten Zeeman <mmzeeman@xs4all.nl>
 %% @copyright 2011 - 2017 Maas-Maarten Zeeman
 
-%% @doc Erlang API for sqlite3 databases
+%% @doc Erlang API for sqlite3+sqlcipher databases
 
 %% Copyright 2011 - 2017 Maas-Maarten Zeeman
 %%
@@ -17,7 +17,9 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 
--module(esqlite3).
+%% Adapted by Felix Kiunke <dev@fkiunke.de> for sqlcipher
+
+-module(esqlcipher).
 -author("Maas-Maarten Zeeman <mmzeeman@xs4all.nl>").
 
 %% higher-level export

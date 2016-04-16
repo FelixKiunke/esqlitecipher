@@ -1,7 +1,6 @@
-Esqlite ![Test](https://github.com/mmzeeman/esqlite/workflows/Test/badge.svg)
-=======
+Esqlcipher
 
-An Erlang nif library for sqlite3.
+An Erlang nif library for sqlcipher.
 
 Introduction
 ------------
@@ -18,3 +17,11 @@ process. This is done by handling all commands from erlang within a
 lightweight thread. The erlang scheduler will get control back when
 the command has been added to the command-queue of the thread.
 
+On the Author(s)
+----------------
+
+This version is derived from Maas-Maarten Zeeman’s Erlang sqlite
+library [esqlite](https://github.com/mmzeeman/esqlite).
+I (Felix Kiunke) merely made some smaller amendments to provide
+support for sqlcipher, a library that provides encryption for sqlite
+databases.

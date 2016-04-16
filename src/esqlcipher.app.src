@@ -1,0 +1,15 @@
+{application, esqlcipher,
+ [
+  {description, "sqlcipher nif interface"},
+  {vsn, "0.0.2"},
+  {modules, [esqlcipher, esqlcipher_nif]},
+  {registered, []},
+  {licenses, ["Apache"]},
+  {links, [{"Github", "https://github.com/FelixKiunke/esqlcipher/"}]},
+  {include_files, ["Makefile"]},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {env, []}
+ ]}.

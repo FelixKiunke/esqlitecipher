@@ -1,4 +1,4 @@
-PROJECT = esqlite
+PROJECT = esqlcipher
 DIALYZER = dialyzer
 
 ERL       ?= erl

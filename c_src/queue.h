@@ -2,9 +2,11 @@
 // See the LICENSE file for more information.
 
 /* adapted by: Maas-Maarten Zeeman <mmzeeman@xs4all.nl */
+/* further adapted by: Felix Kiunke <dev@fkiunke.de>
+   okay, I only changed ESQLITE3_QUEUE_H TO ESQLCIPHER_QUEUE_H actually... */
 
-#ifndef ESQLITE_QUEUE_H
-#define ESQLITE_QUEUE_H
+#ifndef ESQLCIPHER_QUEUE_H
+#define ESQLCIPHER_QUEUE_H
 
 #include "erl_nif.h"
 

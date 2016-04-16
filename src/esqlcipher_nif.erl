@@ -17,7 +17,9 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 
--module(esqlite3_nif).
+%% Adapted by Felix Kiunke <dev@fkiunke.de> for sqlcipher
+
+-module(esqlcipher_nif).
 -author("Maas-Maarten Zeeman <mmzeeman@xs4all.nl>").
 
 %% low-level exports
@@ -41,8 +43,8 @@
 -on_load(init/0).
 
 init() ->
-    NifName = "esqlite3_nif",
-    NifFileName = case code:priv_dir(esqlite) of
+    NifName = "esqlcipher_nif",
+    NifFileName = case code:priv_dir(esqlcipher) of
                       {error, bad_name} -> filename:join("priv", NifName);
                       Dir -> filename:join(Dir, NifName)
                   end,
