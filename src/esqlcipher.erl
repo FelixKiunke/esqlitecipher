@@ -64,10 +64,10 @@ open(Filename) ->
 -spec open(Filename, timeout()) -> {ok, connection()} | {error, _} when
       Filename :: string().
 open(Filename, Timeout) ->
-    {ok, Connection} = esqlite3_nif:start(),
+    {ok, Connection} = esqlcipher_nif:start(),
 
     Ref = make_ref(),
-    ok = esqlite3_nif:open(Connection, Ref, self(), Filename),
+    ok = esqlcipher_nif:open(Connection, Ref, self(), Filename),
     case receive_answer(Ref, Timeout) of
         ok ->
             {ok, {connection, make_ref(), Connection}};
@@ -88,8 +88,20 @@ set_update_hook(Pid, Connection) ->
 -spec set_update_hook(pid(), connection(), timeout()) -> ok | {error, term()}.
 set_update_hook(Pid, {connection, _Ref, Connection}, Timeout) ->
     Ref = make_ref(),
-    ok = esqlite3_nif:set_update_hook(Connection, Ref, self(), Pid),
+    ok = esqlcipher_nif:set_update_hook(Connection, Ref, self(), Pid),
     receive_answer(Ref, Timeout).
+
+
+%% @doc Unlock the database
+-spec key(Password, connection()) -> ok | error when Password :: string()
+key(Password, Connection) ->
+    esqlcipher_nif:key(Connection, Password)
+
+%% @doc Change database password
+-spec key(Password, connection()) -> ok when Password :: string()
+key(Password, Connection) ->
+    esqlcipher_nif:rekey(Connection, Password)
+
 
 %% @doc Execute a sql statement, returns a list with tuples.
 -spec q(sql(), connection()) -> list(tuple()) | {error, term()}.
@@ -288,7 +300,7 @@ exec(Sql, Connection) ->
 %% @spec exec(iolist(), connection(), timeout()) -> integer() | {error, error_message()}
 exec(Sql, {connection, _Ref, Connection}, Timeout) ->
     Ref = make_ref(),
-    ok = esqlite3_nif:exec(Connection, Ref, self(), Sql),
+    ok = esqlcipher_nif:exec(Connection, Ref, self(), Sql),
     receive_answer(Ref, Timeout);
 
 %% @spec exec(iolist(), list(term()), connection()) -> integer() | {error, error_message()}
@@ -309,7 +321,7 @@ changes(Connection) ->
 %% @doc Return the number of affected rows of last statement.
 changes({connection, _Ref, Connection}, Timeout) ->
     Ref = make_ref(),
-    ok = esqlite3_nif:changes(Connection, Ref, self()),
+    ok = esqlcipher_nif:changes(Connection, Ref, self()),
     receive_answer(Ref, Timeout).
 
 %% @doc Insert records, returns the last rowid.
@@ -323,7 +335,7 @@ insert(Sql, Connection) ->
 %% @spec insert(iolist(), connection(), timeout()) -> {ok, integer()} | {error, error_message()}
 insert(Sql, {connection, _Ref, Connection}, Timeout) ->
     Ref = make_ref(),
-    ok = esqlite3_nif:insert(Connection, Ref, self(), Sql),
+    ok = esqlcipher_nif:insert(Connection, Ref, self(), Sql),
     receive_answer(Ref, Timeout).
 
 %% @doc Get autocommit
@@ -334,7 +346,7 @@ get_autocommit(Connection) ->
 
 get_autocommit({connection, _Ref, Connection}, Timeout) ->
     Ref = make_ref(),
-    ok = esqlite3_nif:get_autocommit(Connection, Ref, self()),
+    ok = esqlcipher_nif:get_autocommit(Connection, Ref, self()),
     receive_answer(Ref, Timeout).
 
 %% @doc Prepare a statement
@@ -348,7 +360,7 @@ prepare(Sql, Connection) ->
 %% @spec(iolist(), connection(), timeout()) -> {ok, prepared_statement()} | {error, error_message()}
 prepare(Sql, {connection, _Ref, Connection}=C, Timeout) ->
     Ref = make_ref(),
-    ok = esqlite3_nif:prepare(Connection, Ref, self(), Sql),
+    ok = esqlcipher_nif:prepare(Connection, Ref, self(), Sql),
     case receive_answer(Ref, Timeout) of
         {ok, Stmt} -> {ok, {statement, Stmt, C}};
         Else -> Else
@@ -366,7 +378,7 @@ step(Stmt) ->
 -spec step(term(), timeout()) -> tuple() | '$busy' | '$done'.
 step({statement, Stmt, {connection, _, Conn}}, Timeout) ->
     Ref = make_ref(),
-    ok = esqlite3_nif:multi_step(Conn, Stmt, 1, Ref, self()),
+    ok = esqlcipher_nif:multi_step(Conn, Stmt, 1, Ref, self()),
     case receive_answer(Ref, Timeout) of
         {rows, [Row | []]} -> {row, Row};
         {'$done', []} -> '$done';
@@ -383,7 +395,7 @@ step({statement, Stmt, {connection, _, Conn}}, Timeout) ->
                 {error, term()}.
 multi_step({statement, Stmt, {connection, _, Conn}}, ChunkSize, Timeout) ->
     Ref = make_ref(),
-    ok = esqlite3_nif:multi_step(Conn, Stmt, ChunkSize, Ref, self()),
+    ok = esqlcipher_nif:multi_step(Conn, Stmt, ChunkSize, Ref, self()),
     receive_answer(Ref, Timeout).
 
 %% @doc Reset the prepared statement back to its initial state.
@@ -391,7 +403,7 @@ multi_step({statement, Stmt, {connection, _, Conn}}, ChunkSize, Timeout) ->
 %% @spec reset(prepared_statement()) -> ok | {error, error_message()}
 reset({statement, Stmt, {connection, _, Conn}}) ->
     Ref = make_ref(),
-    ok = esqlite3_nif:reset(Conn, Stmt, Ref, self()),
+    ok = esqlcipher_nif:reset(Conn, Stmt, Ref, self()),
     receive_answer(Ref, ?DEFAULT_TIMEOUT).
 
 %% @doc Bind values to prepared statements
@@ -405,7 +417,7 @@ bind(Stmt, Args) ->
 %% @spec bind(prepared_statement(), [], timeout()) -> ok | {error, error_message()}
 bind({statement, Stmt, {connection, _, Conn}}, Args, Timeout) ->
     Ref = make_ref(),
-    ok = esqlite3_nif:bind(Conn, Stmt, Ref, self(), Args),
+    ok = esqlcipher_nif:bind(Conn, Stmt, Ref, self(), Args),
     receive_answer(Ref, Timeout).
 
 %% @doc Return the column names of the prepared statement.
@@ -417,7 +429,7 @@ column_names(Stmt) ->
 -spec column_names(statement(), timeout()) -> {atom()}.
 column_names({statement, Stmt, {connection, _, Conn}}, Timeout) ->
     Ref = make_ref(),
-    ok = esqlite3_nif:column_names(Conn, Stmt, Ref, self()),
+    ok = esqlcipher_nif:column_names(Conn, Stmt, Ref, self()),
     receive_answer(Ref, Timeout).
 
 %% @doc Return the column types of the prepared statement.
@@ -429,7 +441,7 @@ column_types(Stmt) ->
 -spec column_types(statement(), timeout()) -> {atom()}.
 column_types({statement, Stmt, {connection, _, Conn}}, Timeout) ->
     Ref = make_ref(),
-    ok = esqlite3_nif:column_types(Conn, Stmt, Ref, self()),
+    ok = esqlcipher_nif:column_types(Conn, Stmt, Ref, self()),
     receive_answer(Ref, Timeout).
 
 %% @doc Close the database
@@ -445,7 +457,7 @@ close(Connection) ->
 -spec close(connection(), timeout()) -> ok | {error, _}.
 close({connection, _Ref, Connection}, Timeout) ->
     Ref = make_ref(),
-    ok = esqlite3_nif:close(Connection, Ref, self()),
+    ok = esqlcipher_nif:close(Connection, Ref, self()),
     receive_answer(Ref, Timeout).
 
 %% Internal functions
@@ -453,10 +465,10 @@ close({connection, _Ref, Connection}, Timeout) ->
 receive_answer(Ref, Timeout) ->
     Start = os:timestamp(),
     receive
-        {esqlite3, Ref, Resp} ->
+        {esqlcipher, Ref, Resp} ->
             Resp;
-        {esqlite3, _, _}=StaleAnswer ->
-            error_logger:warning_msg("Esqlite3: Ignoring stale answer ~p~n", [StaleAnswer]),
+        {esqlcipher, _, _}=StaleAnswer ->
+            error_logger:warning_msg("Esqlcipher: Ignoring stale answer ~p~n", [StaleAnswer]),
             PassedMics = timer:now_diff(os:timestamp(), Start) div 1000,
             NewTimeout = case Timeout - PassedMics of
                              Passed when Passed < 0 -> 0;
