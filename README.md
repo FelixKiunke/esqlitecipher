@@ -1,4 +1,5 @@
-Esqlcipher
+Esqlcipher [![Build Status](https://secure.travis-ci.org/FelixKiunke/esqlcipher.png?branch=master)](http://travis-ci.org/FelixKiunke/esqlcipher)
+==========
 
 An Erlang nif library for sqlcipher.
 
