@@ -25,6 +25,8 @@
 %% low-level exports
 -export([start/0,
          open/4,
+         key/4,
+         rekey/4,
          set_update_hook/4,
          exec/4,
          changes/3,
@@ -64,6 +66,26 @@ start() ->
 %%  @spec open(connection(), reference(), pid(), string()) -> ok | {error, message()}
 
 open(_Db, _Ref, _Dest, _Filename) ->
+    erlang:nif_error(nif_library_not_loaded).
+
+%% @doc Give the encryption key for a specified sqlite3 database.
+%%
+%% Note that there will be no error if the key is wrong -- try accessing the
+%% database and look for a NOTADB error to check for that!
+%%
+%%  @spec key(connection(), reference(), pid(), string()) -> ok | {error, message()}
+
+key(_Db, _Ref, _Dest, _Key) ->
+    erlang:nif_error(nif_library_not_loaded).
+
+%% @doc Change the encryption key for a specified sqlite3 database.
+%%
+%% Note that this will only work once the database is decrypted, i.e. key/4 has
+%% been called
+%%
+%%  @spec rekey(connection(), reference(), pid(), string()) -> ok | {error, message()}
+
+rekey(_Db, _Ref, _Dest, _Key) ->
     erlang:nif_error(nif_library_not_loaded).
 
 set_update_hook(_Db, _Ref, _Dest, _Pid) ->

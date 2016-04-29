@@ -20,6 +20,15 @@ open_multiple_different_databases_test() ->
     {ok, _C2} = esqlcipher:open("test2.db"),
     ok.
 
+encryption_test() ->
+    {ok, Db} = esqlcipher:open_encrypted("test_enc.db", "password"),
+    ok = esqlcipher:exec("create table test(a int, b text);", Db),
+    ok = esqlcipher:rekey("1234", Db),
+    ok = esqlcipher:close(Db),
+    {ok, _} = esqlcipher:open_encrypted("test_enc.db", "1234"),
+    file:delete("test_enc.db"),
+    ok.
+
 get_autocommit_test() ->
     {ok, Db} = esqlcipher:open(":memory:"),
     ok = esqlcipher:exec("CREATE TABLE test (id INTEGER PRIMARY KEY, val STRING);", Db),

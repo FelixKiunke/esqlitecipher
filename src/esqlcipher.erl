@@ -24,6 +24,8 @@
 
 %% higher-level export
 -export([open/1, open/2,
+         open_encrypted/2, open_encrypted/3,
+         rekey/2, rekey/3,
          set_update_hook/2, set_update_hook/3,
          exec/2, exec/3,
          changes/1, changes/2,
@@ -75,6 +77,63 @@ open(Filename, Timeout) ->
             Error
     end.
 
+%% @doc Opens an encrypted sqlcipher database connection
+%%
+-spec open_encrypted(Filename, Password) -> {ok, connection()} | {error, _} when
+      Filename :: string(),
+      Password :: string().
+open_encrypted(Filename, Password) ->
+    open_encrypted(Filename, Password, ?DEFAULT_TIMEOUT).
+
+%% @doc Open a database connection to an encrypted database
+%%
+-spec open_encrypted(Filename, Password, timeout()) ->
+      {ok, connection()} | {error, _} when
+      Filename :: string(),
+      Password :: string().
+open_encrypted(Filename, Password, Timeout) ->
+    {ok, Connection} = esqlcipher_nif:start(),
+
+    Ref = make_ref(),
+    ok = esqlcipher_nif:open(Connection, Ref, self(), Filename),
+    case receive_answer(Ref, Timeout) of
+        ok ->
+            Conn = {connection, make_ref(), Connection},
+            case key(Password, Conn, Timeout) of
+                ok -> {ok, Conn};
+                error -> {error, "invalid key"}
+            end;
+        {error, _Msg} = Error ->
+            Error
+    end.
+
+%% @doc Unlock the database
+-spec key(Password, connection(), timeout()) -> ok | error when Password :: string().
+key(Password, {connection, _Ref, Connection}=Conn, Timeout) ->
+    Ref = make_ref(),
+    ok = esqlcipher_nif:key(Connection, Ref, self(), Password),
+    case receive_answer(Ref, Timeout) of
+        ok ->
+            % Test whether the given key was correct. If not, this will give an error
+            case exec("SELECT * FROM main.sqlite_master LIMIT 0;", Conn) of
+                {error, _} -> error;
+                _ -> ok
+            end;
+        {error, _} -> error
+    end.
+
+%% @doc Change database password
+-spec rekey(Password, connection()) -> ok when Password :: string().
+rekey(Password, Connection) ->
+    rekey(Password, Connection, ?DEFAULT_TIMEOUT).
+
+%% @doc Change database password
+-spec rekey(Password, connection(), timeout()) -> ok when Password :: string().
+rekey(Password, {connection, _Ref, Connection}, Timeout) ->
+    Ref = make_ref(),
+    ok = esqlcipher_nif:rekey(Connection, Ref, self(), Password),
+    receive_answer(Ref, Timeout).
+
 %% @doc Subscribe to database notifications
 %% Messages will come in the shape {action, table, id}
 %% Where action will be insert | update | delete
@@ -90,18 +149,6 @@ set_update_hook(Pid, {connection, _Ref, Connection}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:set_update_hook(Connection, Ref, self(), Pid),
     receive_answer(Ref, Timeout).
-
-
-%% @doc Unlock the database
--spec key(Password, connection()) -> ok | error when Password :: string()
-key(Password, Connection) ->
-    esqlcipher_nif:key(Connection, Password)
-
-%% @doc Change database password
--spec key(Password, connection()) -> ok when Password :: string()
-key(Password, Connection) ->
-    esqlcipher_nif:rekey(Connection, Password)
-
 
 %% @doc Execute a sql statement, returns a list with tuples.
 -spec q(sql(), connection()) -> list(tuple()) | {error, term()}.

@@ -23,12 +23,14 @@
 #include <erl_nif.h>
 #include <string.h>
 #include <stdio.h>
+#include <limits.h>
 
 #include <sqlite3.h>
 #include "queue.h"
 
 #define MAX_ATOM_LENGTH 255 /* from atom.h, not exposed in erlang include */
 #define MAX_PATHNAME 512 /* unfortunately not in sqlite.h. */
+#define MAX_KEY_LENGTH 8192
 
 static ErlNifResourceType *esqlite_connection_type = NULL;
 static ErlNifResourceType *esqlite_statement_type = NULL;
@@ -53,6 +55,8 @@ typedef struct {
 typedef enum {
     cmd_unknown,
     cmd_open,
+    cmd_key,
+    cmd_rekey,
     cmd_update_hook_set,
     cmd_notification,
     cmd_exec,
@@ -263,14 +267,53 @@ do_open(ErlNifEnv *env, esqlite_connection *db, const ERL_NIF_TERM arg)
      */
     rc = sqlite3_open(filename, &db->db);
     if(rc != SQLITE_OK) {
-	    error = make_sqlite3_error_tuple(env, rc, db->db);
-	    sqlite3_close_v2(db->db);
-	    db->db = NULL;
-
-	    return error;
+        error = make_sqlite3_error_tuple(env, rc, db->db);
+        sqlite3_close_v2(db->db);
+        db->db = NULL;
+     
+        return error;
     }
 
     sqlite3_busy_timeout(db->db, 2000);
+
+    return make_atom(env, "ok");
+}
+
+static ERL_NIF_TERM
+do_key(ErlNifEnv *env, esqlite_connection *conn, const ERL_NIF_TERM arg) 
+{
+    ErlNifBinary bin;
+
+    enif_inspect_iolist_as_binary(env, enif_make_list1(env, arg), &bin);
+
+    if (bin.size > INT_MAX || bin.size < 1)
+        return make_error_tuple(env, "invalid_key");
+
+    int rc;
+
+    rc = sqlite3_key(conn->db, bin.data, bin.size);
+    if(rc != SQLITE_OK) {
+        return make_sqlite3_error_tuple(env, rc, conn->db);
+    }
+
+    return make_atom(env, "ok");
+}
+
+static ERL_NIF_TERM
+do_rekey(ErlNifEnv *env, esqlite_connection *conn, const ERL_NIF_TERM arg) 
+{
+    ErlNifBinary bin;
+
+    enif_inspect_iolist_as_binary(env, enif_make_list1(env, arg), &bin);
+
+    if (bin.size > INT_MAX || bin.size < 1)
+        return make_error_tuple(env, "invalid_key");
+
+    int rc;
+
+    rc = sqlite3_rekey(conn->db, bin.data, bin.size);
+    if(rc != SQLITE_OK)
+        return make_sqlite3_error_tuple(env, rc, conn->db);
 
     return make_atom(env, "ok");
 }
@@ -706,7 +749,11 @@ evaluate_command(esqlite_command *cmd, esqlite_connection *conn)
 
     switch(cmd->type) {
     case cmd_open:
-	    return do_open(cmd->env, conn, cmd->arg);
+        return do_open(cmd->env, conn, cmd->arg);
+    case cmd_key:
+        return do_key(cmd->env, conn, cmd->arg);
+    case cmd_rekey:
+        return do_rekey(cmd->env, conn, cmd->arg);
     case cmd_update_hook_set:
         return do_set_update_hook(cmd->env, conn, cmd->arg);
     case cmd_exec:
@@ -867,6 +914,70 @@ set_update_hook(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 
     /* command */
     cmd->type = cmd_update_hook_set;
+    cmd->ref = enif_make_copy(cmd->env, argv[1]);
+    cmd->pid = pid;
+    cmd->arg = enif_make_copy(cmd->env, argv[3]);
+
+    return push_command(env, db, cmd);
+}
+
+/*
+ * Give a database key
+ */
+static ERL_NIF_TERM
+esqlite_key(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    esqlite_connection *db;
+    esqlite_command *cmd = NULL;
+    ErlNifPid pid;
+     
+    if(argc != 4)
+        return enif_make_badarg(env);
+    if(!enif_get_resource(env, argv[0], esqlite_connection_type, (void **) &db))
+        return enif_make_badarg(env);
+    if(!enif_is_ref(env, argv[1]))
+        return make_error_tuple(env, "invalid_ref");
+    if(!enif_get_local_pid(env, argv[2], &pid))
+        return make_error_tuple(env, "invalid_pid");
+
+    /* Note, no check is made for the type of the argument */
+    cmd = command_create();
+    if(!cmd)
+        return make_error_tuple(env, "command_create_failed");
+
+    cmd->type = cmd_key;
+    cmd->ref = enif_make_copy(cmd->env, argv[1]);
+    cmd->pid = pid;
+    cmd->arg = enif_make_copy(cmd->env, argv[3]);
+
+    return push_command(env, db, cmd);
+}
+
+/*
+ * Change the database key
+ */
+static ERL_NIF_TERM
+esqlite_rekey(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    esqlite_connection *db;
+    esqlite_command *cmd = NULL;
+    ErlNifPid pid;
+     
+    if(argc != 4)
+        return enif_make_badarg(env);
+    if(!enif_get_resource(env, argv[0], esqlite_connection_type, (void **) &db))
+        return enif_make_badarg(env);
+    if(!enif_is_ref(env, argv[1]))
+        return make_error_tuple(env, "invalid_ref");
+    if(!enif_get_local_pid(env, argv[2], &pid))
+        return make_error_tuple(env, "invalid_pid");
+
+    /* Note, no check is made for the type of the argument */
+    cmd = command_create();
+    if(!cmd)
+        return make_error_tuple(env, "command_create_failed");
+
+    cmd->type = cmd_rekey;
     cmd->ref = enif_make_copy(cmd->env, argv[1]);
     cmd->pid = pid;
     cmd->arg = enif_make_copy(cmd->env, argv[3]);
@@ -1283,6 +1394,8 @@ static int on_upgrade(ErlNifEnv* env, void** priv, void** old_priv_data, ERL_NIF
 static ErlNifFunc nif_funcs[] = {
     {"start", 0, esqlite_start},
     {"open", 4, esqlite_open},
+    {"key", 4, esqlite_key},
+    {"rekey", 4, esqlite_rekey},
     {"set_update_hook", 4, set_update_hook},
     {"exec", 4, esqlite_exec},
     {"changes", 3, esqlite_changes},
