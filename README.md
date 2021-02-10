@@ -1,7 +1,7 @@
 Esqlcipher [![Build Status](https://secure.travis-ci.org/FelixKiunke/esqlcipher.png?branch=master)](http://travis-ci.org/FelixKiunke/esqlcipher)
 ==========
 
-An Erlang nif library for sqlcipher.
+An Erlang nif library for [sqlcipher](https://github.com/sqlcipher/sqlcipher).
 
 Introduction
 ------------
@@ -17,6 +17,37 @@ Special care has been taken not to block the scheduler of the calling
 process. This is done by handling all commands from erlang within a
 lightweight thread. The erlang scheduler will get control back when
 the command has been added to the command-queue of the thread.
+
+Caveats
+-------
+
+The interface could probably use some polishig. Sqlcipher mostly this works
+exactly like SQLite3, except for the crypto stuff. However, the Sqlcipher
+included in this is built using some breaking compile time options such as
+`SQLITE_DQS = 0` (see [here](https://www.sqlite.org/compile.html#recommended_compile_time_options)).
+This means that string literals in SQL commands *must* use single quotes.
+For instance, this:
+```SQL
+INSERT INTO test_table VALUES('hello', 11);
+```
+works while the following will not do what you would expect:
+```SQL
+# this is wrong!
+INSERT INTO test_table VALUES("hello", 11);
+```
+
+See `rebar.config.script` for all compile options that were set!
+
+
+TODO (Incomplete list)
+----------------------
+
+- Better testing of encryption
+- Primitives that support named databases (i.e. `sqlite3_key_v2()`)
+- Configuration options (HMAC, PBKDF2 iterations, salts, page sizes, ...)
+- Testing on other platforms
+- ...
+
 
 On the Author(s)
 ----------------
