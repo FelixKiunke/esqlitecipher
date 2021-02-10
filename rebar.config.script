@@ -1,33 +1,24 @@
 
-NifSharedSources = ["c_src/esqlite3_nif.c", "c_src/queue.c"].
+NifSharedSources = ["c_src/esqlcipher_nif.c", "c_src/queue.c"].
 NifStaticSources = NifSharedSources ++ ["c_src/sqlite3/sqlite3.c"].
-CFlagsDefault = "$CFLAGS -DSQLITE_THREADSAFE=1 -DSQLITE_USE_URI -DSQLITE_ENABLE_FTS3 -DSQLITE_ENABLE_FTS3_PARENTHESIS".
-DrvLdFlagsDefault = "-shared -lsqlite3".
-
-DrvLdFlags =
-    case os:getenv("ESQLITE_CFLAGS") of
-        NotDefined when NotDefined == false; NotDefined == [] -> DrvLdFlagsDefault;
-        DrvLdFlagsOverride -> DrvLdFlagsOverride
-    end.
-
-{NifSources, LdEnv, CFlagsExt} =
-    case os:getenv("ESQLITE_USE_SYSTEM") of
-        NotDefined when NotDefined == false; NotDefined == [] -> {NifStaticSources, [], " -Ic_src/sqlite3"};
-        _Defined -> {NifSharedSources, [{"DRV_LDFLAGS", DrvLdFlags}], []}
-    end.
+CFlagsDefault = "$CFLAGS -DSQLITE_DQS=0 -DSQLITE_HAS_CODEC -DSQLITE_DEFAULT_WAL_SYNCHRONOUS=1 -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_OMIT_DEPRECATED -DSQLITE_OMIT_SHARED_CACHE -DSQLITE_TEMPSTORE= -DSQLITE_THREADSAFE=1 -DSQLITE_USE_URI -DSQLITE_ENABLE_FTS4 -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_FTS3_PARENTHESIS -DSQLITE_ENABLE_JSON1".
+CFlagsExt = " -Ic_src/sqlite3".
 
 CFlags =
-    case os:getenv("ESQLITE_CFLAGS") of
+    case os:getenv("ESQLCIPHER_CFLAGS") of
         NotDefined when NotDefined == false; NotDefined == [] -> CFlagsDefault ++ CFlagsExt;
-        CFlagsOverride -> CFlagsOverride
+        CFlagsOverride -> CFlagsOverride ++ CFlagsExt
     end.
 
 [
-    {require_min_otp_vsn, "R15"},
+    {require_min_otp_vsn, "R23"},
     {port_env, [
         %% Default darwin ldflags causes loading of system sqlite. Removed -bundle flag.
         {"darwin", "DRV_LDFLAGS",
             "-flat_namespace -undefined suppress $ERL_LDFLAGS"},
+
+        {"darwin", "CFLAGS",
+            "$CFLAGS -I/usr/local/opt/openssl/include -I/usr/local/include"},
 
         {"solaris", "CFLAGS",
             "$CFLAGS -std=c99"},
@@ -35,10 +26,12 @@ CFlags =
         {"linux", "CFLAGS",
             "$CFLAGS -std=c11"},
 
-        {"CFLAGS", CFlags}
-    ] ++ LdEnv},
+        {"CFLAGS", CFlags},
+
+        {"LDFLAGS", "$LDFLAGS -lcrypto"}
+    ]},
     {port_specs, [
-        {"priv/esqlite3_nif.so", NifSources}
+        {"priv/esqlcipher_nif.so", NifStaticSources}
     ]},
 
     {plugins, [pc]},
