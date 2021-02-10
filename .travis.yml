@@ -1,9 +1,8 @@
 language: erlang
 otp_release:
-  - 17.5
-  - 18.3
   - 19.3
   - 20.3
   - 21.3
+  - 22.3
   - 23.2
-script: "rebar compile eunit"
+script: "rebar3 compile eunit"
