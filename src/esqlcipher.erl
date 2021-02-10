@@ -267,7 +267,6 @@ fetchone(Statement) ->
 
 %% @doc Fetch all records
 %% @param Statement is prepared sql statement
-%% @spec fetchall(statement()) -> list(tuple()) | {error, term()}.
 -spec fetchall(statement()) ->
                       list(tuple()) |
                       {error, term()}.
@@ -278,7 +277,6 @@ fetchall(Statement) ->
 %% @param Statement is prepared sql statement
 %% @param ChunkSize is a count of rows to read from sqlite and send to erlang process in one bulk.
 %%        Decrease this value if rows are heavy. Default value is 5000 (DEFAULT_CHUNK_SIZE).
-%% @spec fetchall(statement(), pos_integer()) -> list(tuple()) | {error, term()}.
 -spec fetchall(statement(), pos_integer()) ->
                       list(tuple()) |
                       {error, term()}.
@@ -290,7 +288,6 @@ fetchall(Statement, ChunkSize) ->
 %% @param ChunkSize is a count of rows to read from sqlite and send to erlang process in one bulk.
 %%        Decrease this value if rows are heavy. Default value is 5000 (DEFAULT_CHUNK_SIZE).
 %% @param Timeout is timeout per each request of the one bulk
-%% @spec fetchall(statement()) -> list(tuple()) | {error, term()}.
 -spec fetchall(statement(), pos_integer(), timeout()) ->
                       list(tuple()) |
                       {error, term()}.

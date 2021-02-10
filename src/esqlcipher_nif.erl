@@ -119,19 +119,19 @@ prepare(_Db, _Ref, _Dest, _Sql) ->
 
 %% @doc
 %%
-%% @spec multi_step(statement(), pos_integer(), reference(), pid()) -> {term(), list(tuple)} | {error, message()}
+%% @spec multi_step(connection(), statement(), pos_integer(), reference(), pid()) -> {term(), list(tuple)} | {error, message()}
 multi_step(_Db, _Stmt, _Chunk_Size, _Ref, _Dest) ->
     erlang:nif_error(nif_library_not_loaded).
 
 %% @doc
 %%
-%% @spec reset(statement(), reference(), pid()) -> ok | {error, message()}
+%% @spec reset(connection(), statement(), reference(), pid()) -> ok | {error, message()}
 reset(_Db, _Stmt, _Ref, _Dest) ->
     erlang:nif_error(nif_library_not_loaded).
 
 %% @doc
 %%
-%%
+%% @spec finalize(connection(), statement(), reference(), pid()) -> ok | {error, message()}
 finalize(_Db, _Stmt, _Ref, _Dest) ->
     erlang:nif_error(nif_library_not_loaded).
 
