@@ -56,14 +56,14 @@ simple_query_test() ->
     {ok, Db} = esqlcipher:open(":memory:"),
     ok = esqlcipher:exec("begin;", Db),
     ok = esqlcipher:exec("create table test_table(one varchar(10), two int);", Db),
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello1\"", ",", "10" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello1'", ",", "10" ");"], Db),
     {ok, 1} = esqlcipher:changes(Db),
 
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello2\"", ",", "11" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello2'", ",", "11" ");"], Db),
     {ok, 1} = esqlcipher:changes(Db),
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello3\"", ",", "12" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello3'", ",", "12" ");"], Db),
     {ok, 1} = esqlcipher:changes(Db),
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello4\"", ",", "13" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello4'", ",", "13" ");"], Db),
     {ok, 1} = esqlcipher:changes(Db),
     ok = esqlcipher:exec("commit;", Db),
     ok = esqlcipher:exec("select * from test_table;", Db),
@@ -77,12 +77,12 @@ prepare_test() ->
     {ok, Db} = esqlcipher:open(":memory:"),
     esqlcipher:exec("begin;", Db),
     esqlcipher:exec("create table test_table(one varchar(10), two int);", Db),
-    {ok, Statement} = esqlcipher:prepare("insert into test_table values(\"one\", 2)", Db),
+    {ok, Statement} = esqlcipher:prepare("insert into test_table values('one', 2)", Db),
     
     '$done' = esqlcipher:step(Statement),
     {ok, 1} = esqlcipher:changes(Db),
 
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello4\"", ",", "13" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello4'", ",", "13" ");"], Db),
 
     %% Check if the values are there.
     [{<<"one">>, 2}, {<<"hello4">>, 13}] = esqlcipher:q("select * from test_table order by two", Db),
@@ -172,8 +172,8 @@ column_names_test() ->
     {ok, Db} = esqlcipher:open(":memory:"),
     ok = esqlcipher:exec("begin;", Db),
     ok = esqlcipher:exec("create table test_table(one varchar(10), two int);", Db),
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello1\"", ",", "10" ");"], Db),
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello2\"", ",", "20" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello1'", ",", "10" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello2'", ",", "20" ");"], Db),
     ok = esqlcipher:exec("commit;", Db),
 
     %% All columns
@@ -219,8 +219,8 @@ column_types_test() ->
     {ok, Db} = esqlcipher:open(":memory:"),
     ok = esqlcipher:exec("begin;", Db),
     ok = esqlcipher:exec("create table test_table(one varchar(10), two int);", Db),
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello1\"", ",", "10" ");"], Db),
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello2\"", ",", "20" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello1'", ",", "10" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello2'", ",", "20" ");"], Db),
     ok = esqlcipher:exec("commit;", Db),
 
     %% All columns
@@ -279,10 +279,10 @@ foreach_test() ->
     {ok, Db} = esqlcipher:open(":memory:"),
     ok = esqlcipher:exec("begin;", Db),
     ok = esqlcipher:exec("create table test_table(one varchar(10), two int);", Db),
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello1\"", ",", "10" ");"], Db),
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello2\"", ",", "11" ");"], Db),
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello3\"", ",", "12" ");"], Db),
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello4\"", ",", "13" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello1'", ",", "10" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello2'", ",", "11" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello3'", ",", "12" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello4'", ",", "13" ");"], Db),
     ok = esqlcipher:exec("commit;", Db),
 
     F = fun(Row) ->
@@ -307,10 +307,10 @@ map_test() ->
     {ok, Db} = esqlcipher:open(":memory:"),
     ok = esqlcipher:exec("begin;", Db),
     ok = esqlcipher:exec("create table test_table(one varchar(10), two int);", Db),
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello1\"", ",", "10" ");"], Db),
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello2\"", ",", "11" ");"], Db),
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello3\"", ",", "12" ");"], Db),
-    ok = esqlcipher:exec(["insert into test_table values(", "\"hello4\"", ",", "13" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello1'", ",", "10" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello2'", ",", "11" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello3'", ",", "12" ");"], Db),
+    ok = esqlcipher:exec(["insert into test_table values(", "'hello4'", ",", "13" ");"], Db),
     ok = esqlcipher:exec("commit;", Db),
 
     F = fun(Row) -> Row end,
