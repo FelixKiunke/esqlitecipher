@@ -57,14 +57,14 @@
 
 %% @doc Opens a sqlite3 database mentioned in Filename.
 %%
--spec open(FileName) -> {ok, connection()} | {error, _} when
+-spec open(FileName) -> {ok, connection()} | {error, term()} when
       FileName :: string().
 open(Filename) ->
     open(Filename, ?DEFAULT_TIMEOUT).
 
 %% @doc Open a database connection
 %%
--spec open(Filename, timeout()) -> {ok, connection()} | {error, _} when
+-spec open(Filename, timeout()) -> {ok, connection()} | {error, term()} when
       Filename :: string().
 open(Filename, Timeout) ->
     {ok, Connection} = esqlcipher_nif:start(),
@@ -75,7 +75,7 @@ open(Filename, Timeout) ->
         ok ->
             Conn = {connection, make_ref(), Connection, plaintext},
             case exec("SELECT * FROM main.sqlite_master LIMIT 0;", Conn, Timeout) of
-                {error, _} -> {error, "database is encrypted or invalid"};
+                {error, _} -> {error, "file is encrypted or not a valid database"};
                 _ -> {ok, Conn}
             end;
         {error, _Msg}=Error ->
@@ -84,7 +84,7 @@ open(Filename, Timeout) ->
 
 %% @doc Opens an encrypted sqlcipher database connection
 %%
--spec open_encrypted(Filename, Password) -> {ok, connection()} | {error, _} when
+-spec open_encrypted(Filename, Password) -> {ok, connection()} | {error, term()} when
       Filename :: string(),
       Password :: string().
 open_encrypted(Filename, Password) ->
@@ -93,7 +93,7 @@ open_encrypted(Filename, Password) ->
 %% @doc Open a database connection to an encrypted database
 %%
 -spec open_encrypted(Filename, Password, timeout()) ->
-      {ok, connection()} | {error, _} when
+      {ok, connection()} | {error, term()} when
       Filename :: string(),
       Password :: string().
 open_encrypted(Filename, Password, Timeout) ->
@@ -106,7 +106,7 @@ open_encrypted(Filename, Password, Timeout) ->
             Conn = {connection, make_ref(), Connection, encrypted},
             case key(Password, Conn, Timeout) of
                 ok -> {ok, Conn};
-                error -> {error, "invalid password"}
+                error -> {error, "invalid password or file is not a valid database"}
             end;
         {error, _Msg} = Error ->
             Error
@@ -134,12 +134,12 @@ key(Password, {connection, _Ref, Connection, encrypted}=Conn, Timeout) ->
     end.
 
 %% @doc Change database password
--spec rekey(Password, connection()) -> ok when Password :: string().
+-spec rekey(Password, connection()) -> ok | {error, term()} when Password :: string().
 rekey(Password, Connection) ->
     rekey(Password, Connection, ?DEFAULT_TIMEOUT).
 
 %% @doc Change database password
--spec rekey(Password, connection(), timeout()) -> ok when Password :: string().
+-spec rekey(Password, connection(), timeout()) -> ok | {error, term()} when Password :: string().
 rekey(_, {connection, _, _, plaintext}, _Timeout) ->
     {error, "cannot rekey an unencrypted database"};
 rekey(Password, {connection, _Ref, Connection, encrypted}, Timeout) ->
@@ -504,14 +504,14 @@ column_types({statement, Stmt, {connection, _, Conn, _}}, Timeout) ->
 %% @doc Close the database
 %%
 %% @spec close(connection()) -> ok | {error, error_message()}
--spec close(connection()) -> ok | {error, _}.
+-spec close(connection()) -> ok | {error, term()}.
 close(Connection) ->
     close(Connection, ?DEFAULT_TIMEOUT).
 
 %% @doc Close the database
 %%
 %% @spec close(connection(), integer()) -> ok | {error, error_message()}
--spec close(connection(), timeout()) -> ok | {error, _}.
+-spec close(connection(), timeout()) -> ok | {error, term()}.
 close({connection, _Ref, Connection, _}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:close(Connection, Ref, self()),
