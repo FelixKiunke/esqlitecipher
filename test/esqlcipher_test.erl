@@ -8,26 +8,60 @@
 
 open_single_database_test() ->
     {ok, _C1} = esqlcipher:open("test.db"),
+    file:delete("test.db"),
     ok.
 
 open_multiple_same_databases_test() ->
     {ok, _C1} = esqlcipher:open("test.db"),
     {ok, _C2} = esqlcipher:open("test.db"),
+    file:delete("test.db"),
     ok.
 
 open_multiple_different_databases_test() ->
     {ok, _C1} = esqlcipher:open("test1.db"),
     {ok, _C2} = esqlcipher:open("test2.db"),
+    file:delete("test1.db"),
+    file:delete("test2.db"),
     ok.
 
 encryption_test() ->
+    file:delete("test_enc.db"),
     {ok, Db} = esqlcipher:open_encrypted("test_enc.db", "password"),
+    true = esqlcipher:is_encrypted(Db),
     ok = esqlcipher:exec("create table test(a int, b text);", Db),
-    ok = esqlcipher:rekey("1234", Db),
+    ok = esqlcipher:exec("insert into test values(1, 'foo');", Db),
     ok = esqlcipher:close(Db),
-    {ok, _} = esqlcipher:open_encrypted("test_enc.db", "1234"),
+    {error, _} = esqlcipher:open_encrypted("test_enc.db", "1234"),
+    {ok, Db2} = esqlcipher:open_encrypted("test_enc.db", "password"),
+    ok = esqlcipher:exec("select * from test", Db2),
+    ok = esqlcipher:close(Db2),
     file:delete("test_enc.db"),
     ok.
+
+encryption_rekey_test() ->
+    file:delete("test_enc.db"),
+    {ok, Db} = esqlcipher:open_encrypted("test_enc.db", "password"),
+    true = esqlcipher:is_encrypted(Db),
+    ok = esqlcipher:exec("create table test(a int, b text);", Db),
+    ok = esqlcipher:exec("insert into test values(1, 'foo');", Db),
+    ok = esqlcipher:rekey("1234", Db),
+    true = esqlcipher:is_encrypted(Db),
+    ok = esqlcipher:close(Db),
+    {error, _} = esqlcipher:open_encrypted("test_enc.db", "password"),
+    {ok, Db2} = esqlcipher:open_encrypted("test_enc.db", "1234"),
+    ok = esqlcipher:exec("select * from test", Db2),
+    ok = esqlcipher:close(Db2),
+    file:delete("test_enc.db").
+
+encryption_invalid_rekey_test() ->
+    file:delete("test3.db"),
+    {ok, Db} = esqlcipher:open("test3.db"),
+    false = esqlcipher:is_encrypted(Db),
+    ok = esqlcipher:exec("create table test(a int, b text);", Db),
+    ok = esqlcipher:exec("insert into test values(1, 'foo');", Db),
+    {error, _} = esqlcipher:rekey("1234", Db),
+    ok = esqlcipher:close(Db),
+    file:delete("test3.db").
 
 get_autocommit_test() ->
     {ok, Db} = esqlcipher:open(":memory:"),

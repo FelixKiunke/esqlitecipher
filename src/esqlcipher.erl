@@ -25,6 +25,7 @@
 %% higher-level export
 -export([open/1, open/2,
          open_encrypted/2, open_encrypted/3,
+         is_encrypted/1,
          rekey/2, rekey/3,
          set_update_hook/2, set_update_hook/3,
          exec/2, exec/3,
@@ -50,7 +51,7 @@
 -define(DEFAULT_CHUNK_SIZE, 5000).
 
 %%
--type connection() :: {connection, reference(), term()}.
+-type connection() :: {connection, reference(), term(), plaintext | encrypted}.
 -type statement() :: {statement, term(), connection()}.
 -type sql() :: iodata().
 
@@ -72,7 +73,11 @@ open(Filename, Timeout) ->
     ok = esqlcipher_nif:open(Connection, Ref, self(), Filename),
     case receive_answer(Ref, Timeout) of
         ok ->
-            {ok, {connection, make_ref(), Connection}};
+            Conn = {connection, make_ref(), Connection, plaintext},
+            case exec("SELECT * FROM main.sqlite_master LIMIT 0;", Conn, Timeout) of
+                {error, _} -> {error, "database is encrypted or invalid"};
+                _ -> {ok, Conn}
+            end;
         {error, _Msg}=Error ->
             Error
     end.
@@ -98,18 +103,24 @@ open_encrypted(Filename, Password, Timeout) ->
     ok = esqlcipher_nif:open(Connection, Ref, self(), Filename),
     case receive_answer(Ref, Timeout) of
         ok ->
-            Conn = {connection, make_ref(), Connection},
+            Conn = {connection, make_ref(), Connection, encrypted},
             case key(Password, Conn, Timeout) of
                 ok -> {ok, Conn};
-                error -> {error, "invalid key"}
+                error -> {error, "invalid password"}
             end;
         {error, _Msg} = Error ->
             Error
     end.
 
+%% @doc Returns true if a database connection is to an encrypted database
+%%
+-spec is_encrypted(connection()) -> boolean().
+is_encrypted({connection, _, _, encrypted}) -> true;
+is_encrypted({connection, _, _, plaintext}) -> false.
+
 %% @doc Unlock the database (not public)
 -spec key(Password, connection(), timeout()) -> ok | error when Password :: string().
-key(Password, {connection, _Ref, Connection}=Conn, Timeout) ->
+key(Password, {connection, _Ref, Connection, encrypted}=Conn, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:key(Connection, Ref, self(), Password),
     case receive_answer(Ref, Timeout) of
@@ -129,7 +140,9 @@ rekey(Password, Connection) ->
 
 %% @doc Change database password
 -spec rekey(Password, connection(), timeout()) -> ok when Password :: string().
-rekey(Password, {connection, _Ref, Connection}, Timeout) ->
+rekey(_, {connection, _, _, plaintext}, _Timeout) ->
+    {error, "cannot rekey an unencrypted database"};
+rekey(Password, {connection, _Ref, Connection, encrypted}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:rekey(Connection, Ref, self(), Password),
     receive_answer(Ref, Timeout).
@@ -145,7 +158,7 @@ set_update_hook(Pid, Connection) ->
     set_update_hook(Pid, Connection, ?DEFAULT_TIMEOUT).
 
 -spec set_update_hook(pid(), connection(), timeout()) -> ok | {error, term()}.
-set_update_hook(Pid, {connection, _Ref, Connection}, Timeout) ->
+set_update_hook(Pid, {connection, _Ref, Connection, _}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:set_update_hook(Connection, Ref, self(), Pid),
     receive_answer(Ref, Timeout).
@@ -342,17 +355,17 @@ exec(Sql, Connection) ->
 %% @doc Execute
 %%
 %% @spec exec(iolist(), connection(), timeout()) -> integer() | {error, error_message()}
-exec(Sql, {connection, _Ref, Connection}, Timeout) ->
+exec(Sql, {connection, _Ref, Connection, _}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:exec(Connection, Ref, self(), Sql),
     receive_answer(Ref, Timeout);
 
 %% @spec exec(iolist(), list(term()), connection()) -> integer() | {error, error_message()}
-exec(Sql, Params, {connection, _, _}=Connection) when is_list(Params) ->
+exec(Sql, Params, {connection, _, _, _}=Connection) when is_list(Params) ->
     exec(Sql, Params, Connection, ?DEFAULT_TIMEOUT).
 
 %% @spec exec(iolist(), list(term()), connection(), timeout()) -> integer() | {error, error_message()}
-exec(Sql, Params, {connection, _, _}=Connection, Timeout) when is_list(Params) ->
+exec(Sql, Params, {connection, _, _, _}=Connection, Timeout) when is_list(Params) ->
     {ok, Statement} = prepare(Sql, Connection, Timeout),
     bind(Statement, Params),
     step(Statement, Timeout).
@@ -363,7 +376,7 @@ changes(Connection) ->
     changes(Connection, ?DEFAULT_TIMEOUT).
 
 %% @doc Return the number of affected rows of last statement.
-changes({connection, _Ref, Connection}, Timeout) ->
+changes({connection, _Ref, Connection, _}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:changes(Connection, Ref, self()),
     receive_answer(Ref, Timeout).
@@ -377,7 +390,7 @@ insert(Sql, Connection) ->
 %% @doc Insert
 %%
 %% @spec insert(iolist(), connection(), timeout()) -> {ok, integer()} | {error, error_message()}
-insert(Sql, {connection, _Ref, Connection}, Timeout) ->
+insert(Sql, {connection, _Ref, Connection, _}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:insert(Connection, Ref, self(), Sql),
     receive_answer(Ref, Timeout).
@@ -388,7 +401,7 @@ insert(Sql, {connection, _Ref, Connection}, Timeout) ->
 get_autocommit(Connection) ->
     get_autocommit(Connection, ?DEFAULT_TIMEOUT).
 
-get_autocommit({connection, _Ref, Connection}, Timeout) ->
+get_autocommit({connection, _Ref, Connection, _}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:get_autocommit(Connection, Ref, self()),
     receive_answer(Ref, Timeout).
@@ -402,7 +415,7 @@ prepare(Sql, Connection) ->
 %% @doc
 %%
 %% @spec(iolist(), connection(), timeout()) -> {ok, prepared_statement()} | {error, error_message()}
-prepare(Sql, {connection, _Ref, Connection}=C, Timeout) ->
+prepare(Sql, {connection, _Ref, Connection, _}=C, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:prepare(Connection, Ref, self(), Sql),
     case receive_answer(Ref, Timeout) of
@@ -420,7 +433,7 @@ step(Stmt) ->
 %%
 %% @spec step(prepared_statement(), timeout()) -> tuple()
 -spec step(term(), timeout()) -> tuple() | '$busy' | '$done'.
-step({statement, Stmt, {connection, _, Conn}}, Timeout) ->
+step({statement, Stmt, {connection, _, Conn, _}}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:multi_step(Conn, Stmt, 1, Ref, self()),
     case receive_answer(Ref, Timeout) of
@@ -437,7 +450,7 @@ step({statement, Stmt, {connection, _, Conn}}, Timeout) ->
                 {'$busy', list(tuple())} |
                 {'$done', list(tuple())} |
                 {error, term()}.
-multi_step({statement, Stmt, {connection, _, Conn}}, ChunkSize, Timeout) ->
+multi_step({statement, Stmt, {connection, _, Conn, _}}, ChunkSize, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:multi_step(Conn, Stmt, ChunkSize, Ref, self()),
     receive_answer(Ref, Timeout).
@@ -445,7 +458,7 @@ multi_step({statement, Stmt, {connection, _, Conn}}, ChunkSize, Timeout) ->
 %% @doc Reset the prepared statement back to its initial state.
 %%
 %% @spec reset(prepared_statement()) -> ok | {error, error_message()}
-reset({statement, Stmt, {connection, _, Conn}}) ->
+reset({statement, Stmt, {connection, _, Conn, _}}) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:reset(Conn, Stmt, Ref, self()),
     receive_answer(Ref, ?DEFAULT_TIMEOUT).
@@ -459,7 +472,7 @@ bind(Stmt, Args) ->
 %% @doc Bind values to prepared statements
 %%
 %% @spec bind(prepared_statement(), [], timeout()) -> ok | {error, error_message()}
-bind({statement, Stmt, {connection, _, Conn}}, Args, Timeout) ->
+bind({statement, Stmt, {connection, _, Conn, _}}, Args, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:bind(Conn, Stmt, Ref, self(), Args),
     receive_answer(Ref, Timeout).
@@ -471,7 +484,7 @@ column_names(Stmt) ->
     column_names(Stmt, ?DEFAULT_TIMEOUT).
 
 -spec column_names(statement(), timeout()) -> {atom()}.
-column_names({statement, Stmt, {connection, _, Conn}}, Timeout) ->
+column_names({statement, Stmt, {connection, _, Conn, _}}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:column_names(Conn, Stmt, Ref, self()),
     receive_answer(Ref, Timeout).
@@ -483,7 +496,7 @@ column_types(Stmt) ->
     column_types(Stmt, ?DEFAULT_TIMEOUT).
 
 -spec column_types(statement(), timeout()) -> {atom()}.
-column_types({statement, Stmt, {connection, _, Conn}}, Timeout) ->
+column_types({statement, Stmt, {connection, _, Conn, _}}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:column_types(Conn, Stmt, Ref, self()),
     receive_answer(Ref, Timeout).
@@ -499,7 +512,7 @@ close(Connection) ->
 %%
 %% @spec close(connection(), integer()) -> ok | {error, error_message()}
 -spec close(connection(), timeout()) -> ok | {error, _}.
-close({connection, _Ref, Connection}, Timeout) ->
+close({connection, _Ref, Connection, _}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:close(Connection, Ref, self()),
     receive_answer(Ref, Timeout).
