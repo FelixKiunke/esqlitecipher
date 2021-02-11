@@ -107,7 +107,7 @@ open_encrypted(Filename, Password, Timeout) ->
             Error
     end.
 
-%% @doc Unlock the database
+%% @doc Unlock the database (not public)
 -spec key(Password, connection(), timeout()) -> ok | error when Password :: string().
 key(Password, {connection, _Ref, Connection}=Conn, Timeout) ->
     Ref = make_ref(),
@@ -115,7 +115,7 @@ key(Password, {connection, _Ref, Connection}=Conn, Timeout) ->
     case receive_answer(Ref, Timeout) of
         ok ->
             % Test whether the given key was correct. If not, this will give an error
-            case exec("SELECT * FROM main.sqlite_master LIMIT 0;", Conn) of
+            case exec("SELECT * FROM main.sqlite_master LIMIT 0;", Conn, Timeout) of
                 {error, _} -> error;
                 _ -> ok
             end;

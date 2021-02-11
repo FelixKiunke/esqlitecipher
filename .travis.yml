@@ -4,5 +4,5 @@ otp_release:
   - 20.3
   - 21.3
   - 22.3
-  - 23.2
-script: "rebar3 compile eunit"
+  - 23.1
+script: "rebar3 compile && rebar3 eunit"

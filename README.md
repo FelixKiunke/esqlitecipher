@@ -1,4 +1,8 @@
-Esqlcipher [![Build Status](https://secure.travis-ci.org/FelixKiunke/esqlcipher.png?branch=master)](http://travis-ci.org/FelixKiunke/esqlcipher)
+[![Build Status](https://secure.travis-ci.org/FelixKiunke/esqlcipher.png?branch=master)](http://travis-ci.org/FelixKiunke/esqlcipher)
+[![Hex.pm](https://img.shields.io/hexpm/v/esqlcipher.svg)](https://hex.pm/packages/esqlcipher)
+[![Hex.pm](https://img.shields.io/hexpm/dt/esqlcipher.svg)](https://hex.pm/packages/esqlcipher)
+
+Esqlcipher
 ==========
 
 An Erlang nif library for [sqlcipher](https://github.com/sqlcipher/sqlcipher).
