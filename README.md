@@ -1,4 +1,4 @@
-[![Build Status](https://secure.travis-ci.org/FelixKiunke/esqlcipher.png?branch=master)](http://travis-ci.org/FelixKiunke/esqlcipher)
+[![Build Status](https://travis-ci.com/FelixKiunke/esqlcipher.svg?branch=master)](https://travis-ci.com/FelixKiunke/esqlcipher)
 [![Hex.pm](https://img.shields.io/hexpm/v/esqlcipher.svg)](https://hex.pm/packages/esqlcipher)
 [![Hex.pm](https://img.shields.io/hexpm/dt/esqlcipher.svg)](https://hex.pm/packages/esqlcipher)
 
