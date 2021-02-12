@@ -44,6 +44,7 @@
          bind/2, bind/3,
          prepare_bind/3, prepare_bind/4,
          reset/1, reset/2,
+         run/1, run/2,
          fetch_one/1, fetch_one/2,
          fetch_chunk/2, fetch_chunk/3,
          fetch_all/1, fetch_all/2, fetch_all/3,
@@ -274,12 +275,8 @@ exec(Sql, Params, {connection, _, _}=Connection) when is_list(Params) ->
 %% @param Params values that are bound to the SQL statement
 -spec exec(sql(), list(term()), connection(), timeout()) -> ok | sqlite_error().
 exec(Sql, Params, {connection, _, _}=Connection, Timeout) when is_list(Params) ->
-    {ok, Statement} = prepare(Sql, Connection, Timeout),
-    bind(Statement, Params, Timeout),
-    case fetch_one(Statement, Timeout) of
-        {error, _} = Error -> Error;
-        _ -> ok
-    end.
+    {ok, Statement} = prepare_bind(Sql, Params, Connection, Timeout),
+    run(Statement, Timeout).
 
 
 %% @equiv insert(Sql, Connection, 5000)
@@ -333,20 +330,20 @@ bind({statement, Stmt, {connection, Conn, _}}, Args, Timeout) ->
 
 
 %% @equiv prepare_bind(Sql, Args, Connection, 5000)
--spec prepare_bind(sql(), [sql_value()], connection()) -> statement() | sqlite_error().
+-spec prepare_bind(sql(), [sql_value()], connection()) -> {ok, statement()} | sqlite_error().
 prepare_bind(Sql, Args, Connection) ->
     prepare_bind(Sql, Args, Connection, ?DEFAULT_TIMEOUT).
 
 %% @doc Prepare an SQL statement and bind values to it.
 %% This is simply {@link prepare/3} and {@link bind/3} in a single step.
--spec prepare_bind(sql(), [sql_value()], connection(), timeout()) -> statement() | sqlite_error().
+-spec prepare_bind(sql(), [sql_value()], connection(), timeout()) -> {ok, statement()} | sqlite_error().
 prepare_bind(Sql, [], {connection, _, _}=Connection, Timeout) ->
     prepare(Sql, Connection, Timeout);
 prepare_bind(Sql, Args, {connection, _, _}=Connection, Timeout) ->
     case prepare(Sql, Connection, Timeout) of
         {ok, Statement} ->
             case bind(Statement, Args, Timeout) of
-                ok -> Statement;
+                ok -> {ok, Statement};
                 {error, _} = Error -> Error
             end;
         {error, _} = Error ->
@@ -408,10 +405,13 @@ try_multi_step(Statement, ChunkSize, Rest, Tries, Timeout) ->
 fetch_chunk(Statement, ChunkSize) ->
     fetch_chunk(Statement, ChunkSize, ?DEFAULT_TIMEOUT).
 
-%% @doc fetch a chunk a rows
+%% @doc fetch a number of rows.
+%% Can be called multiple times to fetch more rows.
 %% @param Statement a prepared sql statement created by {@link prepare/3} or {@link prepare_bind/4}
 %% @param ChunkSize is a number of rows to be read from sqlite and sent to erlang
 %% @param Timeout timeout for the whole operation. Might need to be increased for very large chunks
+%% @returns `{rows, [...]}' if more rows exist but where not fetched due to the `ChunkSize' limit;
+%%   ``{'$done', [...]}'' if these where the last rows
 -spec fetch_chunk(statement(), pos_integer(), timeout()) ->
     {rows | '$done', [row()]} | sqlite_error().
 fetch_chunk(Statement, ChunkSize, Timeout) ->
@@ -425,13 +425,37 @@ fetch_one(Statement) ->
 
 %% @doc fetch exactly one row of results. Returns `ok' if the result is empty.
 %% @param Statement a prepared sql statement created by {@link prepare/3} or {@link prepare_bind/4}
+%% @returns `{ok, X}' if the statement was executed successfully where `X' is
+%%   either a row in the shape of a tuple or `nil' if no rows where returned
 -spec fetch_one(statement(), timeout()) -> ok | {ok, row()} | sqlite_error().
 fetch_one(Statement, Timeout) ->
     case fetch_chunk(Statement, 1, Timeout) of
         {error, _} = Error -> Error;
-        {'$done', []} -> ok;
+        {'$done', []} -> {ok, nil};
         {rows, [Row]} -> {ok, Row}
     end.
+
+
+%% @equiv run(Statement, 5000)
+-spec run(statement()) -> ok | sqlite_error().
+run(Statement) ->
+    run(Statement, ?DEFAULT_TIMEOUT).
+
+%% @doc run a prepared statement, ignoring any possible results.
+%% If you want to ensure that a query finishes correctly, returning exactly zero
+%% rows, use:
+%%
+%% `{ok, nil} = {@link fetch_one/2. fetch_one}(Statement, Timeout)'
+%%
+%% @returns `ok' if the query finishes without an error,
+%%   whether or not it returns any rows.
+-spec run(statement(), timeout()) -> ok | sqlite_error().
+run(Statement, Timeout) ->
+    case fetch_one(Statement, Timeout) of
+        {ok, _} -> ok;
+        Else -> Else
+    end.
+
 
 %% @equiv fetch_all(Statement, 5000, 5000)
 -spec fetch_all(statement()) ->
