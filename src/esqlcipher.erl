@@ -1,9 +1,21 @@
 %% @author Maas-Maarten Zeeman <mmzeeman@xs4all.nl>
-%% @copyright 2011 - 2017 Maas-Maarten Zeeman
+%% @author Felix Kiunke <dev@fkiunke.de>
+%% @copyright 2011 - 2021 Maas-Maarten Zeeman, Felix Kiunke
+%% @version 1.2.0
 
-%% @doc Erlang API for sqlite3+sqlcipher databases
+%% @doc Erlang API for sqlite3 and sqlcipher databases.
+%% This is an adaptation of Maas-Maarten Zeeman's esqlite package for
+%% <a href="https://www.zetetic.net/sqlcipher/">sqlcipher</a> encrypted sqlite3
+%% databases.
+%%
+%% All functions (except {@link is_encrypted/1}) take an optional `Timeout'
+%% argument. The default value for this timeout is 5 seconds (`5000').
+%%
+%% To open or create a database, use either {@link open/2} or
+%% {@link open_encrypted/3}. These return a database connection that can be used
+%% in the other functions and should be closed afterwards using {@link close/2}.
 
-%% Copyright 2011 - 2017 Maas-Maarten Zeeman
+%% Copyright 2011 - 2021 Maas-Maarten Zeeman, Felix Kiunke
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -17,55 +29,86 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 
-%% Adapted by Felix Kiunke <dev@fkiunke.de> for sqlcipher
-
 -module(esqlcipher).
 -author("Maas-Maarten Zeeman <mmzeeman@xs4all.nl>").
 
 %% higher-level export
 -export([open/1, open/2,
          open_encrypted/2, open_encrypted/3,
+         close/1, close/2,
          is_encrypted/1,
          rekey/2, rekey/3,
-         set_update_hook/2, set_update_hook/3,
-         exec/2, exec/3,
-         changes/1, changes/2,
-         insert/2,
-         get_autocommit/1,
-         get_autocommit/2,
+         exec/2, exec/3, exec/4,
+         insert/2, insert/3,
          prepare/2, prepare/3,
-         step/1, step/2,
-         reset/1,
          bind/2, bind/3,
-         fetchone/1,
-         fetchall/1,
-         fetchall/2,
-         fetchall/3,
+         prepare_bind/3, prepare_bind/4,
+         reset/1, reset/2,
+         fetch_one/1, fetch_one/2,
+         fetch_chunk/2, fetch_chunk/3,
+         fetch_all/1, fetch_all/2, fetch_all/3,
+         changes/1, changes/2,
          column_names/1, column_names/2,
          column_types/1, column_types/2,
-         close/1, close/2]).
+         get_autocommit/1, get_autocommit/2,
+         set_update_hook/2, set_update_hook/3,
 
--export([q/2, q/3, q/4, map/3, foreach/3]).
+         q/2, q/3, q/4,
+         map/3, map/4, map/5,
+         foreach/3, foreach/4, foreach/5]).
 
 -define(DEFAULT_TIMEOUT, 5000).
 -define(DEFAULT_CHUNK_SIZE, 5000).
+%% How many times to retry fetching from a busy database. 0 = fail immediately when busy
+-define(MAX_TRIES, 5).
 
-%%
--type connection() :: {connection, reference(), term(), plaintext | encrypted}.
+-type connection() :: {connection, pid(), plaintext | encrypted}.
+%% Database connection type.
+%% Returned by {@link open/2} and {@link open_encrypted/3}.
+
 -type statement() :: {statement, term(), connection()}.
--type sql() :: iodata().
+%% Prepared statement type.
+%% Returned by {@link prepare/3} or {@link prepare_bind/4}.
 
-%% @doc Opens a sqlite3 database mentioned in Filename.
-%%
--spec open(FileName) -> {ok, connection()} | {error, term()} when
-      FileName :: string().
+-type sqlite_error() :: {error, {atom(), string()}}.
+%% Error return type.
+%% Contains an error id atom and a reason/error message.
+
+-type sql() :: iodata().
+%% SQL string type.
+
+-type row() :: tuple().
+%% SQL row type.
+
+-type sql_value() :: number() | atom() | iodata() | {blob, iodata()}.
+%% SQL value type.
+
+-type map_function(ReturnType) :: fun((Row :: row()) -> ReturnType) | fun((ColNames :: tuple(), Row :: row()) -> ReturnType).
+%% Type of functions used in {@link map/5}.
+
+-type foreach_function() :: fun((Row :: row()) -> any()) | fun((ColNames :: tuple(), Row :: row()) -> any()).
+%% Type of functions used in {@link foreach/5}.
+
+
+
+%% @equiv open(Filename, 5000)
+-spec open(string()) ->  {ok, connection()} | sqlite_error().
 open(Filename) ->
     open(Filename, ?DEFAULT_TIMEOUT).
 
-%% @doc Open a database connection
+%% @doc Open an unencrypted database connection.
+%% If `Filename' doesn't exist, it will be created. You can also open an
+%% in-memory database that will be destroyed after closing by giving `:memory:'
+%% as the Filename. <a href="https://www.sqlite.org/uri.html">URI filenames</a>
+%% are allowed as well.
 %%
--spec open(Filename, timeout()) -> {ok, connection()} | {error, term()} when
-      Filename :: string().
+%% The database will be checked by testing whether `sqlite_master' is readable.
+%% Unreadable, corrupted or encrypted databases will return an error of the form
+%% `{error, {baddb, _}}'.
+%%
+%% Since sqlcipher is just sqlite3 under the hood, these unencrypted databases
+%% are fully compatible with sqlite3.
+-spec open(string(), timeout()) -> {ok, connection()} | sqlite_error().
 open(Filename, Timeout) ->
     {ok, Connection} = esqlcipher_nif:start(),
 
@@ -73,271 +116,285 @@ open(Filename, Timeout) ->
     ok = esqlcipher_nif:open(Connection, Ref, self(), Filename),
     case receive_answer(Ref, Timeout) of
         ok ->
-            Conn = {connection, make_ref(), Connection, plaintext},
+            Conn = {connection, Connection, plaintext},
             case exec("SELECT * FROM main.sqlite_master LIMIT 0;", Conn, Timeout) of
-                {error, _} -> {error, "file is encrypted or not a valid database"};
-                _ -> {ok, Conn}
+                {error, _} ->
+                    ok = close(Conn),
+                    {error, {baddb, "file is encrypted or not a valid database"}};
+                ok ->
+                    {ok, Conn}
             end;
-        {error, _Msg}=Error ->
+        {error, _Msg} = Error ->
             Error
     end.
 
-%% @doc Opens an encrypted sqlcipher database connection
-%%
--spec open_encrypted(Filename, Password) -> {ok, connection()} | {error, term()} when
-      Filename :: string(),
-      Password :: string().
-open_encrypted(Filename, Password) ->
-    open_encrypted(Filename, Password, ?DEFAULT_TIMEOUT).
 
-%% @doc Open a database connection to an encrypted database
+%% @equiv open_encrypted(Filename, Key, 5000)
+-spec open_encrypted(string(), string()) -> {ok, connection()} | sqlite_error().
+open_encrypted(Filename, Key) ->
+    open_encrypted(Filename, Key, ?DEFAULT_TIMEOUT).
+
+%% @doc Open an encrypted database connection.
+%% If `Filename' doesn't exist, it will be created.
 %%
--spec open_encrypted(Filename, Password, timeout()) ->
-      {ok, connection()} | {error, term()} when
-      Filename :: string(),
-      Password :: string().
-open_encrypted(Filename, Password, Timeout) ->
+%% The database will be checked by testing whether `sqlite_master' is readable.
+%% Unreadable or corrupted databases as well as an incorrect `Key' will
+%% return an error of the form `{error, {baddb, _}}'.
+%%
+%% Normally, the actual database key will be derived from `Key' using PBKDF2
+%% key derivation by sqlcipher. However, it's possible to specify a raw byte
+%% sequence as a key. This key has to be hex-encoded and can be used by passing
+%% ``"x'A0B1C2(...)D3E4F5'"'' using a 64 character hex string for a resulting
+%% 32 byte key (256 bits). Finally, an exact database salt can be specified as
+%% well by passing a 96 character hex string (the last 32 characters will be
+%% used as the salt). If the salt is not explicitly provided, it will be
+%% generated randomly and stored in the first 16 bytes of the database.
+%% 
+%% Please refer to the
+%% <a href="https://www.zetetic.net/sqlcipher/sqlcipher-api/#key">sqlcipher
+%% documentation</a> for further information about the generation and usage of
+%% encryption keys.
+-spec open_encrypted(string(), string(), timeout()) -> {ok, connection()} | sqlite_error().
+open_encrypted(Filename, Key, Timeout) ->
     {ok, Connection} = esqlcipher_nif:start(),
 
     Ref = make_ref(),
     ok = esqlcipher_nif:open(Connection, Ref, self(), Filename),
     case receive_answer(Ref, Timeout) of
         ok ->
-            Conn = {connection, make_ref(), Connection, encrypted},
-            case key(Password, Conn, Timeout) of
-                ok -> {ok, Conn};
-                error -> {error, "invalid password or file is not a valid database"}
+            Conn = {connection, Connection, encrypted},
+            case key(Key, Conn, Timeout) of
+                {error, _} = Error ->
+                    ok = close(Conn),
+                    Error;
+                ok ->
+                    {ok, Conn}
             end;
         {error, _Msg} = Error ->
             Error
     end.
 
-%% @doc Returns true if a database connection is to an encrypted database
-%%
--spec is_encrypted(connection()) -> boolean().
-is_encrypted({connection, _, _, encrypted}) -> true;
-is_encrypted({connection, _, _, plaintext}) -> false.
 
-%% @doc Unlock the database (not public)
--spec key(Password, connection(), timeout()) -> ok | error when Password :: string().
-key(Password, {connection, _Ref, Connection, encrypted}=Conn, Timeout) ->
+%% @equiv close(Connection, 5000)
+-spec close(connection()) -> ok | sqlite_error().
+close(Connection) ->
+    close(Connection, ?DEFAULT_TIMEOUT).
+
+%% @doc Close the database connection.
+-spec close(Connection :: connection(), timeout()) -> ok | sqlite_error().
+close({connection, Connection, _}, Timeout) ->
     Ref = make_ref(),
-    ok = esqlcipher_nif:key(Connection, Ref, self(), Password),
+    ok = esqlcipher_nif:close(Connection, Ref, self()),
+    receive_answer(Ref, Timeout).
+
+
+%% @doc Whether a database is encrypted.
+%% Returns true if the database connection is to an encrypted database, false
+%% if it's a plaintext database
+-spec is_encrypted(Connection :: connection()) -> boolean().
+is_encrypted({connection, _, encrypted}) -> true;
+is_encrypted({connection, _, plaintext}) -> false.
+
+
+%% @doc Unlock database and test whether the key is correct.
+%% Must be called before the database is written to.
+%% @private
+-spec key(string(), connection(), timeout()) -> ok | sqlite_error().
+key(Key, {connection, Conn, encrypted}=Connection, Timeout) ->
+    Ref = make_ref(),
+    ok = esqlcipher_nif:key(Conn, Ref, self(), Key),
     case receive_answer(Ref, Timeout) of
         ok ->
             % Test whether the given key was correct. If not, this will give an error
-            case exec("SELECT * FROM main.sqlite_master LIMIT 0;", Conn, Timeout) of
-                {error, _} -> error;
-                _ -> ok
+            case exec("SELECT * FROM main.sqlite_master LIMIT 0;", Connection, Timeout) of
+                {error, {notadb, _}} ->
+                    {error, {baddb, "invalid key or file is not a valid database"}};
+                {error, _} = Error ->
+                    Error;
+                ok -> ok
             end;
         {error, _} -> error
     end.
 
-%% @doc Change database password
--spec rekey(Password, connection()) -> ok | {error, term()} when Password :: string().
-rekey(Password, Connection) ->
-    rekey(Password, Connection, ?DEFAULT_TIMEOUT).
 
-%% @doc Change database password
--spec rekey(Password, connection(), timeout()) -> ok | {error, term()} when Password :: string().
-rekey(_, {connection, _, _, plaintext}, _Timeout) ->
-    {error, "cannot rekey an unencrypted database"};
-rekey(Password, {connection, _Ref, Connection, encrypted}, Timeout) ->
+%% @equiv rekey(Key, Connection, 5000)
+-spec rekey(string(), connection()) -> ok | sqlite_error().
+rekey(Key, Connection) ->
+    rekey(Key, Connection, ?DEFAULT_TIMEOUT).
+
+%% @doc Change the database key.
+%% This function cannot be used to encrypt an unencrypted database and will
+%% return an error `{error, {rekey_plaintext, _}}' if called on one.
+%%
+%% @see open_encrypted/3
+-spec rekey(string(), Connection :: connection(), timeout()) ->  ok | sqlite_error().
+rekey(_, {connection, _, plaintext}, _Timeout) ->
+    {error, {rekey_plaintext, "cannot rekey an unencrypted database"}};
+rekey(Key, {connection, Conn, encrypted}, Timeout) ->
     Ref = make_ref(),
-    ok = esqlcipher_nif:rekey(Connection, Ref, self(), Password),
+    ok = esqlcipher_nif:rekey(Conn, Ref, self(), Key),
     receive_answer(Ref, Timeout).
 
-%% @doc Subscribe to database notifications
-%% Messages will come in the shape {action, table, id}
-%% Where action will be insert | update | delete
-%% and table will be a string
-%% and id will be an integer
-%%
--spec set_update_hook(pid(), connection()) -> ok | {error, term()}.
+
+%% @equiv set_update_hook(Pid, Connection, 5000)
+-spec set_update_hook(pid(), connection()) -> ok | sqlite_error().
 set_update_hook(Pid, Connection) ->
     set_update_hook(Pid, Connection, ?DEFAULT_TIMEOUT).
 
--spec set_update_hook(pid(), connection(), timeout()) -> ok | {error, term()}.
-set_update_hook(Pid, {connection, _Ref, Connection, _}, Timeout) ->
+%% @doc Subscribe to notifications for row updates, insertions and deletions.
+%% Messages will come in the shape of `{Action, Table :: string(), Id :: integer()}',
+%% where `Action' will be either `insert', `update' or `delete' and `Id' will be
+%% the affected row id (i.e. the `INTEGER PRIMARY KEY' if the table has one).
+-spec set_update_hook(pid(), connection(), timeout()) -> ok | sqlite_error().
+set_update_hook(Pid, {connection, Connection, _}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:set_update_hook(Connection, Ref, self(), Pid),
     receive_answer(Ref, Timeout).
 
-%% @doc Execute a sql statement, returns a list with tuples.
--spec q(sql(), connection()) -> list(tuple()) | {error, term()}.
-q(Sql, Connection) ->
-    q(Sql, [], Connection).
 
-%% @doc Execute statement, bind args and return a list with tuples as result.
--spec q(sql(), list(), connection()) -> list(tuple()) | {error, term()}.
-q(Sql, [], Connection) ->
-    case prepare(Sql, Connection) of
-        {ok, Statement} ->
-            fetchall(Statement);
-        {error, _Msg}=Error ->
-            throw(Error)
-    end;
-q(Sql, Args, Connection) ->
-    case prepare(Sql, Connection) of
-        {ok, Statement} ->
-            ok = bind(Statement, Args),
-            fetchall(Statement);
-        {error, _Msg}=Error ->
-            throw(Error)
-    end.
+%% @equiv exec(Sql, Connection, 5000)
+-spec exec(sql(), connection()) -> ok | sqlite_error().
+exec(Sql, Connection) ->
+    exec(Sql, Connection, ?DEFAULT_TIMEOUT).
 
-%% @doc Execute statement, bind args and return a list with tuples as result restricted by timeout.
--spec q(sql(), list(), connection(), timeout()) -> list(tuple()) | {error, term()}.
-q(Sql, Args, Connection, Timeout) ->
-    case prepare(Sql, Connection, Timeout) of
-        {ok, Statement} ->
-            ok = bind(Statement, Args),
-            fetchall(Statement, ?DEFAULT_CHUNK_SIZE, Timeout);
-        {error, _Msg}=Error ->
-            throw(Error)
-    end.
-
-%% @doc
--spec map(F, sql(), connection()) -> list(Type) when
-      F :: fun((Row) -> Type) | fun((ColumnNames, Row) -> Type),
-      Row :: tuple(),
-      ColumnNames :: tuple(),
-      Type :: any().
-map(F, Sql, Connection) ->
-    case prepare(Sql, Connection) of
-        {ok, Statement} ->
-            map_s(F, Statement);
-        {error, _Msg}=Error ->
-            throw(Error)
-    end.
-
-%% @doc
--spec foreach(F, sql(), connection()) -> ok when
-      F :: fun((Row) -> any()) | fun((ColumnNames, Row) -> any()),
-      Row :: tuple(),
-      ColumnNames :: tuple().
-foreach(F, Sql, Connection) ->
-    case prepare(Sql, Connection) of
-        {ok, Statement} ->
-            foreach_s(F, Statement);
-        {error, _Msg}=Error ->
-            throw(Error)
-    end.
-
+%% @doc Execute (simple or prepared) SQL statement without returning anything.
 %%
--spec foreach_s(F, statement()) -> ok when
-      F :: fun((Row) -> any()) | fun((ColumnNames, Row) -> any()),
-      Row :: tuple(),
-      ColumnNames :: tuple().
-foreach_s(F, Statement) when is_function(F, 1) ->
-    case try_multi_step(Statement, 1, [], 0) of
-        {'$done', []} -> ok;
-        {error, _} = E -> F(E);
-        {rows, [Row | []]} ->
-            F(Row),
-            foreach_s(F, Statement)
-    end;
-foreach_s(F, Statement) when is_function(F, 2) ->
-    ColumnNames = column_names(Statement),
-    case try_multi_step(Statement, 1, [], 0) of
-        {'$done', []} -> ok;
-        {error, _} = E -> F([], E);
-        {rows, [Row | []]} ->
-            F(ColumnNames, Row),
-            foreach_s(F, Statement)
+%% The second form of invocation (with `Params') is equivalent to
+%% {@link exec/4. `exec(Sql, Params, Connection, 5000)'}.
+-spec exec(sql(), Connection :: connection(), timeout()) -> ok | sqlite_error()
+        ; (sql(), [_], connection()) -> ok | sqlite_error().
+exec(Sql, {connection, Connection, _}, Timeout) ->
+    Ref = make_ref(),
+    ok = esqlcipher_nif:exec(Connection, Ref, self(), Sql),
+    receive_answer(Ref, Timeout);
+exec(Sql, Params, {connection, _, _}=Connection) when is_list(Params) ->
+    exec(Sql, Params, Connection, ?DEFAULT_TIMEOUT).
+
+%% @doc Execute prepared SQL statement without returning anything.
+%% @param Params values that are bound to the SQL statement
+-spec exec(sql(), list(term()), connection(), timeout()) -> ok | sqlite_error().
+exec(Sql, Params, {connection, _, _}=Connection, Timeout) when is_list(Params) ->
+    {ok, Statement} = prepare(Sql, Connection, Timeout),
+    bind(Statement, Params, Timeout),
+    case fetch_one(Statement, Timeout) of
+        {error, _} = Error -> Error;
+        _ -> ok
     end.
 
-%%
--spec map_s(F, statement()) -> list(Type) when
-      F :: fun((Row) -> Type) | fun((ColumnNames, Row) -> Type),
-      Row :: tuple(),
-      ColumnNames :: tuple(),
-      Type :: term().
-map_s(F, Statement) when is_function(F, 1) ->
-    case try_multi_step(Statement, 1, [], 0) of
-        {'$done', []} -> [];
-        {error, _} = E -> F(E);
-        {rows, [Row | []]} ->
-            [F(Row) | map_s(F, Statement)]
-    end;
-map_s(F, Statement) when is_function(F, 2) ->
-    ColumnNames = column_names(Statement),
-    case try_multi_step(Statement, 1, [], 0) of
-        {'$done', []} -> [];
-        {error, _} = E -> F([], E);
-        {rows, [Row | []]} ->
-            [F(ColumnNames, Row) | map_s(F, Statement)]
-    end.
 
-%%
-%%-spec fetchone(statement()) -> tuple().
-fetchone(Statement) ->
-    case try_multi_step(Statement, 1, [], 0) of
-        {'$done', []} -> ok;
-        {error, _} = E -> E;
-        {rows, [Row | []]} -> Row
-    end.
+%% @equiv insert(Sql, Connection, 5000)
+-spec insert(sql(), connection()) -> {ok, integer()} |  sqlite_error().
+insert(Sql, Connection) ->
+    insert(Sql, Connection, ?DEFAULT_TIMEOUT).
 
-%% @doc Fetch all records
-%% @param Statement is prepared sql statement
--spec fetchall(statement()) ->
-                      list(tuple()) |
-                      {error, term()}.
-fetchall(Statement) ->
-    fetchall(Statement, ?DEFAULT_CHUNK_SIZE, ?DEFAULT_TIMEOUT).
+%% @doc Insert records, returns the last inserted rowid.
+%% `Sql' can be any `INSERT' statement. If the table has a column of type
+%% `INTEGER PRIMARY KEY', the returned rowid will equal that primary key.
+%% See also the sqlite3 docs for
+%% <a href="https://sqlite.org/c3ref/last_insert_rowid.html">sqlite3_last_insert_rowid</a>.
+-spec insert(sql(), Connection :: connection(), timeout()) -> {ok, integer()} | sqlite_error().
+insert(Sql, {connection, Connection, _}, Timeout) ->
+    Ref = make_ref(),
+    ok = esqlcipher_nif:insert(Connection, Ref, self(), Sql),
+    receive_answer(Ref, Timeout).
 
-%% @doc Fetch all records
-%% @param Statement is prepared sql statement
-%% @param ChunkSize is a count of rows to read from sqlite and send to erlang process in one bulk.
-%%        Decrease this value if rows are heavy. Default value is 5000 (DEFAULT_CHUNK_SIZE).
--spec fetchall(statement(), pos_integer()) ->
-                      list(tuple()) |
-                      {error, term()}.
-fetchall(Statement, ChunkSize) ->
-    fetchall(Statement, ChunkSize, ?DEFAULT_TIMEOUT).
 
-%% @doc Fetch all records
-%% @param Statement is prepared sql statement
-%% @param ChunkSize is a count of rows to read from sqlite and send to erlang process in one bulk.
-%%        Decrease this value if rows are heavy. Default value is 5000 (DEFAULT_CHUNK_SIZE).
-%% @param Timeout is timeout per each request of the one bulk
--spec fetchall(statement(), pos_integer(), timeout()) ->
-                      list(tuple()) |
-                      {error, term()}.
-fetchall(Statement, ChunkSize, Timeout) ->
-    case fetchall_internal(Statement, ChunkSize, [], Timeout) of
-        {'$done', Rows} -> lists:reverse(Rows);
-        {error, _} = E -> E
-    end.
+%% @equiv prepare(Sql, Connection, Timeout)
+-spec prepare(sql(), connection()) -> {ok, statement()} | sqlite_error().
+prepare(Sql, Connection) ->
+    prepare(Sql, Connection, ?DEFAULT_TIMEOUT).
 
-%% return rows in revers order
--spec fetchall_internal(statement(), pos_integer(), list(tuple()), timeout()) ->
-                {'$done', list(tuple())} |
-                {error, term()}.
-fetchall_internal(Statement, ChunkSize, Rest, Timeout) ->
-    case try_multi_step(Statement, ChunkSize, Rest, 0, Timeout) of
-        {rows, Rows} -> fetchall_internal(Statement, ChunkSize, Rows, Timeout);
+%% @doc Prepare (i.e. compile) an SQL statement.
+%% Value placeholder can then be bound using {@link bind/3}. Or, you can do both
+%% in one step using {@link prepare_bind/4}!
+-spec prepare(sql(), connection(), timeout()) -> {ok, statement()} | sqlite_error().
+prepare(Sql, {connection, Connection, _}=C, Timeout) ->
+    Ref = make_ref(),
+    ok = esqlcipher_nif:prepare(Connection, Ref, self(), Sql),
+    case receive_answer(Ref, Timeout) of
+        {ok, Stmt} -> {ok, {statement, Stmt, C}};
         Else -> Else
     end.
 
-%% Try a number of steps, when the database is busy,
-%% return rows in revers order
-try_multi_step(Statement, ChunkSize, Rest, Tries) ->
-    try_multi_step(Statement, ChunkSize, Rest, Tries, ?DEFAULT_TIMEOUT).
 
-%% Try a number of steps, when the database is busy,
-%% return rows in revers order
--spec try_multi_step(statement(), pos_integer(), list(tuple()), non_neg_integer(), timeout()) ->
+%% @equiv bind(Statement, Args, 5000)
+-spec bind(statement(), [sql_value()]) -> ok | sqlite_error().
+bind(Statement, Args) ->
+    bind(Statement, Args, ?DEFAULT_TIMEOUT).
+
+%% @doc Bind values to a prepared statement created by {@link prepare/3}.
+%% Note that you can also use {@link prepare_bind/4} to prepare and bind a
+%% statement in one step.
+-spec bind(Statement :: statement(), [sql_value()], timeout()) -> ok | sqlite_error().
+bind({statement, Stmt, {connection, Conn, _}}, Args, Timeout) ->
+    Ref = make_ref(),
+    ok = esqlcipher_nif:bind(Conn, Stmt, Ref, self(), Args),
+    receive_answer(Ref, Timeout).
+
+
+%% @equiv prepare_bind(Sql, Args, Connection, 5000)
+-spec prepare_bind(sql(), [sql_value()], connection()) -> statement() | sqlite_error().
+prepare_bind(Sql, Args, Connection) ->
+    prepare_bind(Sql, Args, Connection, ?DEFAULT_TIMEOUT).
+
+%% @doc Prepare an SQL statement and bind values to it.
+%% This is simply {@link prepare/3} and {@link bind/3} in a single step.
+-spec prepare_bind(sql(), [sql_value()], connection(), timeout()) -> statement() | sqlite_error().
+prepare_bind(Sql, [], {connection, _, _}=Connection, Timeout) ->
+    prepare(Sql, Connection, Timeout);
+prepare_bind(Sql, Args, {connection, _, _}=Connection, Timeout) ->
+    case prepare(Sql, Connection, Timeout) of
+        {ok, Statement} ->
+            case bind(Statement, Args, Timeout) of
+                ok -> Statement;
+                {error, _} = Error -> Error
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+
+%% @equiv reset(Statement, 5000)
+-spec reset(statement()) -> ok | sqlite_error().
+reset(Statement) ->
+    reset(Statement, ?DEFAULT_TIMEOUT).
+
+%% @doc Reset the prepared statement back to its initial state.
+-spec reset(Statement :: statement(), timeout()) -> ok | sqlite_error().
+reset({statement, Stmt, {connection, Conn, _}}, Timeout) ->
+    Ref = make_ref(),
+    ok = esqlcipher_nif:reset(Conn, Stmt, Ref, self()),
+    receive_answer(Ref, Timeout).
+
+
+%% @doc attempt to fetch multiple results in one call.
+%% Returns rows in reverse order
+%% @private
+-spec multi_step(statement(), pos_integer(), timeout()) ->
                 {rows, list(tuple())} |
+                {'$busy', list(tuple())} |
                 {'$done', list(tuple())} |
                 {error, term()}.
-try_multi_step(_Statement, _ChunkSize, _Rest, Tries, _Timeout) when Tries > 5 ->
-    throw(too_many_tries);
+multi_step({statement, Stmt, {connection, Conn, _}}, ChunkSize, Timeout) ->
+    Ref = make_ref(),
+    ok = esqlcipher_nif:multi_step(Conn, Stmt, ChunkSize, Ref, self()),
+    receive_answer(Ref, Timeout).
+
+
+%% @doc retry `multi_step' a number of times if the database is busy.
+%% Returns rows in reverse order
+%% @private
+-spec try_multi_step(statement(), pos_integer(), [tuple()], non_neg_integer(), timeout()) ->
+    {rows, [tuple()]} | {'$done', [tuple()]} | sqlite_error().
+try_multi_step(_Statement, _ChunkSize, _Rest, Tries, _Timeout) when Tries > ?MAX_TRIES ->
+    {error, {busy, "database is busy"}};
 try_multi_step(Statement, ChunkSize, Rest, Tries, Timeout) ->
     case multi_step(Statement, ChunkSize, Timeout) of
-        {'$busy', Rows} -> %% core can fetch a number of rows (rows < ChunkSize) per 'multi_step' call and then get busy...
-            erlang:display({"busy", Tries}),
-            timer:sleep(100 * Tries),
+        {'$busy', Rows} ->
+            % NB: It's possible that the database only becomes busy after a number
+            % of rows have already been fetched.
+            % Exponential backoff:
+            timer:sleep(50 + math:pow(2, Tries) * 10),
             try_multi_step(Statement, ChunkSize, Rows ++ Rest, Tries + 1, Timeout);
         {rows, Rows} ->
             {rows, Rows ++ Rest};
@@ -346,179 +403,257 @@ try_multi_step(Statement, ChunkSize, Rest, Tries, Timeout) ->
         Else -> Else
     end.
 
-%% @doc Execute Sql statement, returns the number of affected rows.
-%%
-%% @spec exec(iolist(), connection()) -> integer() |  {error, error_message()}
-exec(Sql, Connection) ->
-    exec(Sql, Connection, ?DEFAULT_TIMEOUT).
+%% @equiv fetch_chunk(Statement, ChunkSize, 5000)
+-spec fetch_chunk(statement(), pos_integer()) -> {rows | '$done', [row()]} | sqlite_error().
+fetch_chunk(Statement, ChunkSize) ->
+    fetch_chunk(Statement, ChunkSize, ?DEFAULT_TIMEOUT).
 
-%% @doc Execute
-%%
-%% @spec exec(iolist(), connection(), timeout()) -> integer() | {error, error_message()}
-exec(Sql, {connection, _Ref, Connection, _}, Timeout) ->
-    Ref = make_ref(),
-    ok = esqlcipher_nif:exec(Connection, Ref, self(), Sql),
-    receive_answer(Ref, Timeout);
-
-%% @spec exec(iolist(), list(term()), connection()) -> integer() | {error, error_message()}
-exec(Sql, Params, {connection, _, _, _}=Connection) when is_list(Params) ->
-    exec(Sql, Params, Connection, ?DEFAULT_TIMEOUT).
-
-%% @spec exec(iolist(), list(term()), connection(), timeout()) -> integer() | {error, error_message()}
-exec(Sql, Params, {connection, _, _, _}=Connection, Timeout) when is_list(Params) ->
-    {ok, Statement} = prepare(Sql, Connection, Timeout),
-    bind(Statement, Params),
-    step(Statement, Timeout).
+%% @doc fetch a chunk a rows
+%% @param Statement a prepared sql statement created by {@link prepare/3} or {@link prepare_bind/4}
+%% @param ChunkSize is a number of rows to be read from sqlite and sent to erlang
+%% @param Timeout timeout for the whole operation. Might need to be increased for very large chunks
+-spec fetch_chunk(statement(), pos_integer(), timeout()) ->
+    {rows | '$done', [row()]} | sqlite_error().
+fetch_chunk(Statement, ChunkSize, Timeout) ->
+    try_multi_step(Statement, ChunkSize, [], 0, Timeout).
 
 
-%% @doc Return the number of affected rows of last statement.
+%% @equiv fetch_one(Statement, 5000)
+-spec fetch_one(statement()) -> ok | {ok, row()} | sqlite_error().
+fetch_one(Statement) ->
+    fetch_one(Statement, ?DEFAULT_TIMEOUT).
+
+%% @doc fetch exactly one row of results. Returns `ok' if the result is empty.
+%% @param Statement a prepared sql statement created by {@link prepare/3} or {@link prepare_bind/4}
+-spec fetch_one(statement(), timeout()) -> ok | {ok, row()} | sqlite_error().
+fetch_one(Statement, Timeout) ->
+    case fetch_chunk(Statement, 1, Timeout) of
+        {error, _} = Error -> Error;
+        {'$done', []} -> ok;
+        {rows, [Row]} -> {ok, Row}
+    end.
+
+%% @equiv fetch_all(Statement, 5000, 5000)
+-spec fetch_all(statement()) ->
+                      list(tuple()) |
+                      {error, term()}.
+fetch_all(Statement) ->
+    fetch_all(Statement, ?DEFAULT_CHUNK_SIZE, ?DEFAULT_TIMEOUT).
+
+%% @equiv fetch_all(Statement, ChunkSize, 5000)
+-spec fetch_all(statement(), pos_integer()) ->
+                      list(tuple()) |
+                      {error, term()}.
+fetch_all(Statement, ChunkSize) ->
+    fetch_all(Statement, ChunkSize, ?DEFAULT_TIMEOUT).
+
+%% @doc Fetch all records
+%% @param Statement a prepared sql statement created by {@link prepare/3} or {@link prepare_bind/4}
+%% @param ChunkSize is a number of rows to be read from sqlite and sent to erlang in one bulk
+%%        Decrease this value if rows are heavy. Default value is 5000 (`DEFAULT_CHUNK_SIZE').
+%% @param Timeout is timeout per each request of one bulk
+-spec fetch_all(statement(), pos_integer(), timeout()) -> [row()] | sqlite_error().
+fetch_all(Statement, ChunkSize, Timeout) ->
+    case fetch_all_internal(Statement, ChunkSize, [], Timeout) of
+        {'$done', Rows} -> lists:reverse(Rows);
+        {error, _} = Error -> Error
+    end.
+
+%% @doc Fetches all rows in chunk. Rows are returned in reverse order.
+%% @private
+-spec fetch_all_internal(statement(), pos_integer(), [row()], timeout()) ->
+    {'$done', [row()]} | sqlite_error().
+fetch_all_internal(Statement, ChunkSize, Rest, Timeout) ->
+    case try_multi_step(Statement, ChunkSize, Rest, 0, Timeout) of
+        {rows, Rows} -> fetch_all_internal(Statement, ChunkSize, Rows, Timeout);
+        Else -> Else
+    end.
+
+
+%% @equiv changes(Connection, 5000)
 changes(Connection) ->
     changes(Connection, ?DEFAULT_TIMEOUT).
 
-%% @doc Return the number of affected rows of last statement.
-changes({connection, _Ref, Connection, _}, Timeout) ->
+%% @doc Return the number of affected rows of the last statement.
+-spec changes(Connection :: connection(), timeout()) -> {ok, integer()} | sqlite_error().
+changes({connection, Connection, _}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:changes(Connection, Ref, self()),
     receive_answer(Ref, Timeout).
 
-%% @doc Insert records, returns the last rowid.
-%%
-%% @spec insert(iolist(), connection()) -> {ok, integer()} |  {error, error_message()}
-insert(Sql, Connection) ->
-    insert(Sql, Connection, ?DEFAULT_TIMEOUT).
 
-%% @doc Insert
-%%
-%% @spec insert(iolist(), connection(), timeout()) -> {ok, integer()} | {error, error_message()}
-insert(Sql, {connection, _Ref, Connection, _}, Timeout) ->
-    Ref = make_ref(),
-    ok = esqlcipher_nif:insert(Connection, Ref, self(), Sql),
-    receive_answer(Ref, Timeout).
-
-%% @doc Get autocommit
-%%
-%% @spec get_autocommit(connection) -> true | false
-get_autocommit(Connection) ->
-    get_autocommit(Connection, ?DEFAULT_TIMEOUT).
-
-get_autocommit({connection, _Ref, Connection, _}, Timeout) ->
-    Ref = make_ref(),
-    ok = esqlcipher_nif:get_autocommit(Connection, Ref, self()),
-    receive_answer(Ref, Timeout).
-
-%% @doc Prepare a statement
-%%
-%% @spec prepare(iolist(), connection()) -> {ok, prepared_statement()} | {error, error_message()}
-prepare(Sql, Connection) ->
-    prepare(Sql, Connection, ?DEFAULT_TIMEOUT).
-
-%% @doc
-%%
-%% @spec(iolist(), connection(), timeout()) -> {ok, prepared_statement()} | {error, error_message()}
-prepare(Sql, {connection, _Ref, Connection, _}=C, Timeout) ->
-    Ref = make_ref(),
-    ok = esqlcipher_nif:prepare(Connection, Ref, self(), Sql),
-    case receive_answer(Ref, Timeout) of
-        {ok, Stmt} -> {ok, {statement, Stmt, C}};
-        Else -> Else
-    end.
-
-%% @doc Step
-%%
-%% @spec step(prepared_statement()) -> tuple()
-step(Stmt) ->
-    step(Stmt, ?DEFAULT_TIMEOUT).
-
-%% @doc
-%%
-%% @spec step(prepared_statement(), timeout()) -> tuple()
--spec step(term(), timeout()) -> tuple() | '$busy' | '$done'.
-step({statement, Stmt, {connection, _, Conn, _}}, Timeout) ->
-    Ref = make_ref(),
-    ok = esqlcipher_nif:multi_step(Conn, Stmt, 1, Ref, self()),
-    case receive_answer(Ref, Timeout) of
-        {rows, [Row | []]} -> {row, Row};
-        {'$done', []} -> '$done';
-        {'$busy', []} -> '$busy';
-        Else -> Else
-    end.
-
-%% make multiple sqlite steps per call
-%% return rows in reverse order
--spec multi_step(term(), pos_integer(), timeout()) ->
-                {rows, list(tuple())} |
-                {'$busy', list(tuple())} |
-                {'$done', list(tuple())} |
-                {error, term()}.
-multi_step({statement, Stmt, {connection, _, Conn, _}}, ChunkSize, Timeout) ->
-    Ref = make_ref(),
-    ok = esqlcipher_nif:multi_step(Conn, Stmt, ChunkSize, Ref, self()),
-    receive_answer(Ref, Timeout).
-
-%% @doc Reset the prepared statement back to its initial state.
-%%
-%% @spec reset(prepared_statement()) -> ok | {error, error_message()}
-reset({statement, Stmt, {connection, _, Conn, _}}) ->
-    Ref = make_ref(),
-    ok = esqlcipher_nif:reset(Conn, Stmt, Ref, self()),
-    receive_answer(Ref, ?DEFAULT_TIMEOUT).
-
-%% @doc Bind values to prepared statements
-%%
-%% @spec bind(prepared_statement(), value_list()) -> ok | {error, error_message()}
-bind(Stmt, Args) ->
-    bind(Stmt, Args, ?DEFAULT_TIMEOUT).
-
-%% @doc Bind values to prepared statements
-%%
-%% @spec bind(prepared_statement(), [], timeout()) -> ok | {error, error_message()}
-bind({statement, Stmt, {connection, _, Conn, _}}, Args, Timeout) ->
-    Ref = make_ref(),
-    ok = esqlcipher_nif:bind(Conn, Stmt, Ref, self(), Args),
-    receive_answer(Ref, Timeout).
+%% @equiv column_names(Statement, 5000)
+-spec column_names(statement()) -> tuple().
+column_names(Statement) ->
+    column_names(Statement, ?DEFAULT_TIMEOUT).
 
 %% @doc Return the column names of the prepared statement.
-%%
--spec column_names(statement()) -> {atom()}.
-column_names(Stmt) ->
-    column_names(Stmt, ?DEFAULT_TIMEOUT).
-
--spec column_names(statement(), timeout()) -> {atom()}.
-column_names({statement, Stmt, {connection, _, Conn, _}}, Timeout) ->
+-spec column_names(Statement :: statement(), timeout()) -> {ok, tuple()} | sqlite_error().
+column_names({statement, Stmt, {connection, Conn, _}}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:column_names(Conn, Stmt, Ref, self()),
     receive_answer(Ref, Timeout).
 
-%% @doc Return the column types of the prepared statement.
-%%
--spec column_types(statement()) -> {atom()}.
+
+%% @equiv column_types(Statement, 5000)
+-spec column_types(statement()) -> tuple().
 column_types(Stmt) ->
     column_types(Stmt, ?DEFAULT_TIMEOUT).
 
--spec column_types(statement(), timeout()) -> {atom()}.
-column_types({statement, Stmt, {connection, _, Conn, _}}, Timeout) ->
+%% @doc Return the declared column types of the prepared statement.
+%% Note that since sqlite3 is dynamically typed, actual column values need not
+%% necessarily conform to the declared type
+-spec column_types(statement(), timeout()) -> {ok, tuple()} | sqlite_error().
+column_types({statement, Stmt, {connection, Conn, _}}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:column_types(Conn, Stmt, Ref, self()),
     receive_answer(Ref, Timeout).
 
-%% @doc Close the database
-%%
-%% @spec close(connection()) -> ok | {error, error_message()}
--spec close(connection()) -> ok | {error, term()}.
-close(Connection) ->
-    close(Connection, ?DEFAULT_TIMEOUT).
 
-%% @doc Close the database
-%%
-%% @spec close(connection(), integer()) -> ok | {error, error_message()}
--spec close(connection(), timeout()) -> ok | {error, term()}.
-close({connection, _Ref, Connection, _}, Timeout) ->
+%% @equiv get_autocommit(Connection, 5000)
+-spec get_autocommit(connection()) -> boolean() | sqlite_error().
+get_autocommit(Connection) ->
+    get_autocommit(Connection, ?DEFAULT_TIMEOUT).
+
+%% @doc Returns whether the database is in <a href="https://sqlite.org/c3ref/get_autocommit.html">autocommit mode</a>.
+%% Autocommit is normally enabled, except within transactions.
+-spec get_autocommit(Connection :: connection(), timeout()) -> boolean() | sqlite_error().
+get_autocommit({connection, Connection, _}, Timeout) ->
     Ref = make_ref(),
-    ok = esqlcipher_nif:close(Connection, Ref, self()),
+    ok = esqlcipher_nif:get_autocommit(Connection, Ref, self()),
     receive_answer(Ref, Timeout).
 
-%% Internal functions
 
+%% @equiv q(Sql, [], Connection, 5000)
+%% @throws sqlite_error()
+-spec q(sql(), connection()) -> [tuple()].
+q(Sql, Connection) ->
+    q(Sql, [], Connection, ?DEFAULT_TIMEOUT).
+
+%% @equiv q(Sql, Args, Connection, 5000)
+%% @throws sqlite_error()
+-spec q(sql(), [sql_value()], connection()) -> [tuple()].
+q(Sql, Args, Connection) ->
+    q(Sql, Args, Connection, ?DEFAULT_TIMEOUT).
+
+%% @doc Prepare statement, bind args and return a list with tuples as result.
+%% Errors are thrown, not returned.
+%% @throws sqlite_error()
+-spec q(sql(), [sql_value()], connection(), timeout()) -> [tuple()].
+q(Sql, Args, Connection, Timeout) ->
+    case prepare_bind(Sql, Args, Connection, Timeout) of
+        {ok, Statement} ->
+            case fetch_all(Statement, ?DEFAULT_CHUNK_SIZE, Timeout) of
+                {error, _} = Error ->
+                    throw(Error);
+                Res ->
+                    Res
+            end;
+        {error, _} = Error ->
+            throw(Error)
+    end.
+
+
+%% @equiv map(F, Sql, [], Connection, 5000)
+%% @throws sqlite_error()
+-spec map(map_function(Type), sql(), connection()) -> [Type].
+map(F, Sql, {connection, _, _} = Connection) ->
+    map(F, Sql, [], Connection, ?DEFAULT_TIMEOUT).
+
+%% @equiv map(F, Sql, [], Connection, 5000)
+%% @throws sqlite_error()
+-spec map(map_function(Type), sql(), [sql_value()], connection()) -> [Type].
+map(F, Sql, Args, Connection) ->
+    map(F, Sql, Args, Connection, ?DEFAULT_TIMEOUT).
+
+%% @doc Map over all rows returned by the SQL query `Sql'.
+%% @param A function that takes either one parameter (a row tuple) or two
+%%   (a column name tuple and a row tuple) and returns any kind of value
+%% @param Sql an SQL query
+%% @param Args values that are bound to `Sql'
+%% @throws sqlite_error()
+-spec map(map_function(Type), sql(), [sql_value()], connection(), timeout()) -> [Type].
+map(F, Sql, Args, Connection, Timeout) ->
+    case prepare_bind(Sql, Args, Connection, Timeout) of
+        {ok, Statement} ->
+            {ok, ColumnNames} = column_names(Statement, Timeout),
+            map_s(F, Statement, ColumnNames, Timeout);
+        {error, _Msg} = Error ->
+            throw(Error)
+    end.
+
+
+%% @doc Map function over statement results
+%% @private
+-spec map_s(map_function(Type), statement(), tuple(), timeout()) -> [Type].
+map_s(F, Statement, ColNames, Timeout) when is_function(F, 1) ->
+    case fetch_one(Statement, Timeout) of
+        ok -> [];
+        {ok, Row} -> [F(Row) | map_s(F, Statement, ColNames, Timeout)];
+        {error, _} = Error -> throw(Error)
+    end;
+map_s(F, Statement, ColNames, Timeout) when is_function(F, 2) ->
+    case fetch_one(Statement, Timeout) of
+        ok -> [];
+        {ok, Row} -> [F(ColNames, Row) | map_s(F, ColNames, Statement, Timeout)];
+        {error, _} = Error -> throw(Error)
+    end.
+
+
+
+%% @equiv foreach(F, Sql, [], Connection, 5000)
+%% @throws sqlite_error()
+-spec foreach(foreach_function(), sql(), connection()) -> ok.
+foreach(F, Sql, {connection, _, _} = Connection) ->
+    foreach(F, Sql, [], Connection, ?DEFAULT_TIMEOUT).
+
+%% @equiv foreach(F, Sql, Args, Connection, 5000)
+%% @throws sqlite_error()
+-spec foreach(foreach_function(), sql(), [sql_value()], connection()) -> ok.
+foreach(F, Sql, Args, Connection) ->
+    foreach(F, Sql, Args, Connection, ?DEFAULT_TIMEOUT).
+
+
+%% @doc Execute a function for all rows returned by the SQL query `Sql'.
+%% @param A function that takes either one parameter (a row tuple) or two
+%%   (a column name tuple and a row tuple). Return values are ignored.
+%% @param Sql an SQL query
+%% @param Args values that are bound to `Sql'
+%% @throws sqlite_error()
+-spec foreach(foreach_function(), sql(), [sql_value()], connection(), timeout()) -> ok.
+foreach(F, Sql, Args, Connection, Timeout) ->
+    case prepare_bind(Sql, Args, Connection, Timeout) of
+        {ok, Statement} ->
+            {ok, ColumnNames} = column_names(Statement, Timeout),
+            ok = foreach_s(F, Statement, ColumnNames, Timeout);
+        {error, _Msg} = Error ->
+            throw(Error)
+    end.
+
+%% @doc Run function for each row
+%% @private
+-spec foreach_s(foreach_function(), statement(), tuple(), timeout()) -> ok.
+foreach_s(F, Statement, ColNames, Timeout) when is_function(F, 1) ->
+    case fetch_one(Statement, Timeout) of
+        ok -> ok;
+        {ok, Row} -> 
+            F(Row),
+            foreach_s(F, Statement, ColNames, Timeout);
+        {error, _} = Error -> throw(Error)
+    end;
+foreach_s(F, Statement, ColNames, Timeout) when is_function(F, 2) ->
+    case fetch_one(Statement, Timeout) of
+        ok -> ok;
+        {ok, Row} -> 
+            F(ColNames, Row),
+            foreach_s(F, ColNames, Statement, Timeout);
+        {error, _} = Error -> throw(Error)
+    end.
+
+
+%% @doc Wait for an answer for the request referred as `Ref'.
+%% @private
+%-spec receive_answer(reference(), )
 receive_answer(Ref, Timeout) ->
     Start = os:timestamp(),
     receive
