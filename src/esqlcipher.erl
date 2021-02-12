@@ -512,11 +512,12 @@ column_names(Statement) ->
     column_names(Statement, ?DEFAULT_TIMEOUT).
 
 %% @doc Return the column names of the prepared statement.
--spec column_names(Statement :: statement(), timeout()) -> {ok, tuple()} | sqlite_error().
+-spec column_names(Statement :: statement(), timeout()) -> tuple().
 column_names({statement, Stmt, {connection, Conn, _}}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:column_names(Conn, Stmt, Ref, self()),
-    receive_answer(Ref, Timeout).
+    {ok, ColumnNames} = receive_answer(Ref, Timeout),
+    ColumnNames.
 
 
 %% @equiv column_types(Statement, 5000)
@@ -527,11 +528,12 @@ column_types(Stmt) ->
 %% @doc Return the declared column types of the prepared statement.
 %% Note that since sqlite3 is dynamically typed, actual column values need not
 %% necessarily conform to the declared type
--spec column_types(statement(), timeout()) -> {ok, tuple()} | sqlite_error().
+-spec column_types(statement(), timeout()) -> tuple().
 column_types({statement, Stmt, {connection, Conn, _}}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:column_types(Conn, Stmt, Ref, self()),
-    receive_answer(Ref, Timeout).
+    {ok, ColumnTypes} = receive_answer(Ref, Timeout),
+    ColumnTypes.
 
 
 %% @equiv get_autocommit(Connection, 5000)

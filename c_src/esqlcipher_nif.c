@@ -678,7 +678,7 @@ do_column_names(ErlNifEnv *env, sqlite3_stmt *stmt)
 
     size = sqlite3_column_count(stmt);
     if (size == 0) {
-        return enif_make_tuple(env, 0);
+        return make_ok_tuple(env, enif_make_tuple(env, 0));
     } else if (size < 0) {
         return make_error_tuple(env, "call_fail", "invalid sqlite3_column_count");
     }
@@ -700,7 +700,7 @@ do_column_names(ErlNifEnv *env, sqlite3_stmt *stmt)
 
     column_names = enif_make_tuple_from_array(env, array, size);
     enif_free(array);
-    return column_names;
+    return make_ok_tuple(env, column_names);
 }
 
 static ERL_NIF_TERM
@@ -713,7 +713,7 @@ do_column_types(ErlNifEnv *env, sqlite3_stmt *stmt)
 
     size = sqlite3_column_count(stmt);
     if (size == 0) {
-        return enif_make_tuple(env, 0);
+        return make_ok_tuple(env, enif_make_tuple(env, 0));
     } else if (size < 0) {
         return make_error_tuple(env, "call_fail", "invalid sqlite3_column_count");
     }
@@ -733,7 +733,7 @@ do_column_types(ErlNifEnv *env, sqlite3_stmt *stmt)
 
     column_types = enif_make_tuple_from_array(env, array, size);
     enif_free(array);
-    return column_types;
+    return make_ok_tuple(env, column_types);
 }
 
 static ERL_NIF_TERM
