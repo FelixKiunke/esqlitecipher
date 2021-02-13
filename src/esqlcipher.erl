@@ -93,7 +93,7 @@
 
 
 %% @equiv open(Filename, 5000)
--spec open(string()) ->  {ok, connection()} | sqlite_error().
+-spec open(iodata()) ->  {ok, connection()} | sqlite_error().
 open(Filename) ->
     open(Filename, ?DEFAULT_TIMEOUT).
 
@@ -109,7 +109,7 @@ open(Filename) ->
 %%
 %% Since sqlcipher is just sqlite3 under the hood, these unencrypted databases
 %% are fully compatible with sqlite3.
--spec open(string(), timeout()) -> {ok, connection()} | sqlite_error().
+-spec open(iodata(), timeout()) -> {ok, connection()} | sqlite_error().
 open(Filename, Timeout) ->
     {ok, Connection} = esqlcipher_nif:start(),
 
@@ -131,7 +131,7 @@ open(Filename, Timeout) ->
 
 
 %% @equiv open_encrypted(Filename, Key, 5000)
--spec open_encrypted(string(), string()) -> {ok, connection()} | sqlite_error().
+-spec open_encrypted(iodata(), iodata()) -> {ok, connection()} | sqlite_error().
 open_encrypted(Filename, Key) ->
     open_encrypted(Filename, Key, ?DEFAULT_TIMEOUT).
 
@@ -155,7 +155,7 @@ open_encrypted(Filename, Key) ->
 %% <a href="https://www.zetetic.net/sqlcipher/sqlcipher-api/#key">sqlcipher
 %% documentation</a> for further information about the generation and usage of
 %% encryption keys.
--spec open_encrypted(string(), string(), timeout()) -> {ok, connection()} | sqlite_error().
+-spec open_encrypted(iodata(), iodata(), timeout()) -> {ok, connection()} | sqlite_error().
 open_encrypted(Filename, Key, Timeout) ->
     {ok, Connection} = esqlcipher_nif:start(),
 
@@ -200,7 +200,7 @@ is_encrypted({connection, _, plaintext}) -> false.
 %% @doc Unlock database and test whether the key is correct.
 %% Must be called before the database is written to.
 %% @private
--spec key(string(), connection(), timeout()) -> ok | sqlite_error().
+-spec key(iodata(), connection(), timeout()) -> ok | sqlite_error().
 key(Key, {connection, Conn, encrypted}=Connection, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:key(Conn, Ref, self(), Key),
@@ -219,7 +219,7 @@ key(Key, {connection, Conn, encrypted}=Connection, Timeout) ->
 
 
 %% @equiv rekey(Key, Connection, 5000)
--spec rekey(string(), connection()) -> ok | sqlite_error().
+-spec rekey(iodata(), connection()) -> ok | sqlite_error().
 rekey(Key, Connection) ->
     rekey(Key, Connection, ?DEFAULT_TIMEOUT).
 
@@ -228,7 +228,7 @@ rekey(Key, Connection) ->
 %% return an error `{error, {rekey_plaintext, _}}' if called on one.
 %%
 %% @see open_encrypted/3
--spec rekey(string(), Connection :: connection(), timeout()) ->  ok | sqlite_error().
+-spec rekey(iodata(), Connection :: connection(), timeout()) ->  ok | sqlite_error().
 rekey(_, {connection, _, plaintext}, _Timeout) ->
     {error, {rekey_plaintext, "cannot rekey an unencrypted database"}};
 rekey(Key, {connection, Conn, encrypted}, Timeout) ->
