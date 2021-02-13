@@ -81,7 +81,7 @@
 -type row() :: tuple().
 %% SQL row type.
 
--type sql_value() :: number() | atom() | iodata() | {blob, iodata()}.
+-type sql_value() :: number() | nil | iodata() | {blob, iodata()}.
 %% SQL value type.
 
 -type map_function(ReturnType) :: fun((Row :: row()) -> ReturnType) | fun((ColNames :: tuple(), Row :: row()) -> ReturnType).
@@ -322,6 +322,11 @@ bind(Statement, Args) ->
 %% @doc Bind values to a prepared statement created by {@link prepare/3}.
 %% Note that you can also use {@link prepare_bind/4} to prepare and bind a
 %% statement in one step.
+%%
+%% `nil' will be interpreted as `NULL'.
+%% Use `{blob, <<binary>>}' for sqlite `BLOB's.
+%% Since sqlite does not support true booleans, `true' and `false' are invalid;
+%% use `1' and `0', respectively.
 -spec bind(Statement :: statement(), [sql_value()], timeout()) -> ok | sqlite_error().
 bind({statement, Stmt, {connection, Conn, _}}, Args, Timeout) ->
     Ref = make_ref(),
@@ -602,7 +607,7 @@ map(F, Sql, Args, Connection) ->
 map(F, Sql, Args, Connection, Timeout) ->
     case prepare_bind(Sql, Args, Connection, Timeout) of
         {ok, Statement} ->
-            {ok, ColumnNames} = column_names(Statement, Timeout),
+            ColumnNames = column_names(Statement, Timeout),
             map_s(F, Statement, ColumnNames, Timeout);
         {error, _Msg} = Error ->
             throw(Error)
@@ -614,13 +619,13 @@ map(F, Sql, Args, Connection, Timeout) ->
 -spec map_s(map_function(Type), statement(), tuple(), timeout()) -> [Type].
 map_s(F, Statement, ColNames, Timeout) when is_function(F, 1) ->
     case fetch_one(Statement, Timeout) of
-        ok -> [];
+        {ok, nil} -> [];
         {ok, Row} -> [F(Row) | map_s(F, Statement, ColNames, Timeout)];
         {error, _} = Error -> throw(Error)
     end;
 map_s(F, Statement, ColNames, Timeout) when is_function(F, 2) ->
     case fetch_one(Statement, Timeout) of
-        ok -> [];
+        {ok, nil} -> [];
         {ok, Row} -> [F(ColNames, Row) | map_s(F, ColNames, Statement, Timeout)];
         {error, _} = Error -> throw(Error)
     end.
@@ -650,7 +655,7 @@ foreach(F, Sql, Args, Connection) ->
 foreach(F, Sql, Args, Connection, Timeout) ->
     case prepare_bind(Sql, Args, Connection, Timeout) of
         {ok, Statement} ->
-            {ok, ColumnNames} = column_names(Statement, Timeout),
+            ColumnNames = column_names(Statement, Timeout),
             ok = foreach_s(F, Statement, ColumnNames, Timeout);
         {error, _Msg} = Error ->
             throw(Error)
@@ -661,7 +666,7 @@ foreach(F, Sql, Args, Connection, Timeout) ->
 -spec foreach_s(foreach_function(), statement(), tuple(), timeout()) -> ok.
 foreach_s(F, Statement, ColNames, Timeout) when is_function(F, 1) ->
     case fetch_one(Statement, Timeout) of
-        ok -> ok;
+        {ok, nil} -> ok;
         {ok, Row} -> 
             F(Row),
             foreach_s(F, Statement, ColNames, Timeout);
@@ -669,7 +674,7 @@ foreach_s(F, Statement, ColNames, Timeout) when is_function(F, 1) ->
     end;
 foreach_s(F, Statement, ColNames, Timeout) when is_function(F, 2) ->
     case fetch_one(Statement, Timeout) of
-        ok -> ok;
+        {ok, nil} -> ok;
         {ok, Row} -> 
             F(ColNames, Row),
             foreach_s(F, ColNames, Statement, Timeout);

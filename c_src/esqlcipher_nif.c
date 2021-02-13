@@ -256,19 +256,22 @@ destruct_esqlcipher_statement(ErlNifEnv *env, void *arg)
 static ERL_NIF_TERM
 do_open(ErlNifEnv *env, esqlcipher_connection *db, const ERL_NIF_TERM arg)
 {
-    char filename[MAX_PATHNAME];
-    unsigned int size;
+    ErlNifBinary bin;
+    ERL_NIF_TERM eos = enif_make_int(env, 0);
     int rc;
     ERL_NIF_TERM error;
 
-    size = enif_get_string(env, arg, filename, MAX_PATHNAME, ERL_NIF_LATIN1);
-    if (size <= 0) {
-        return make_error_tuple(env, "badarg", "invalid filename");
+    if (!enif_inspect_iolist_as_binary(env, enif_make_list2(env, arg, eos), &bin)) {
+        return make_error_tuple(env, "badarg", "filename is not a valid iolist or binary");
+    }
+
+    if (bin.size <= 0 || bin.size > MAX_PATHNAME) {
+        return make_error_tuple(env, "badarg", "filename empty or too long");
     }
 
     /* Open the database.
      */
-    rc = sqlite3_open(filename, &db->db);
+    rc = sqlite3_open(bin.data, &db->db);
     if (rc != SQLITE_OK) {
         error = make_sqlite3_error_tuple(env, rc, db->db);
         sqlite3_close_v2(db->db);
@@ -287,7 +290,9 @@ do_key(ErlNifEnv *env, esqlcipher_connection *conn, const ERL_NIF_TERM arg)
 {
     ErlNifBinary bin;
 
-    enif_inspect_iolist_as_binary(env, enif_make_list1(env, arg), &bin);
+    if (!enif_inspect_iolist_as_binary(env, arg, &bin)) {
+        return make_error_tuple(env, "badarg", "key is not a valid iolist or binary");
+    }
 
     if (bin.size > INT_MAX || bin.size < 1)
         return make_error_tuple(env, "badarg", "invalid key");
@@ -307,7 +312,9 @@ do_rekey(ErlNifEnv *env, esqlcipher_connection *conn, const ERL_NIF_TERM arg)
 {
     ErlNifBinary bin;
 
-    enif_inspect_iolist_as_binary(env, enif_make_list1(env, arg), &bin);
+    if (!enif_inspect_iolist_as_binary(env, arg, &bin)) {
+        return make_error_tuple(env, "badarg", "key is not a valid iolist or binary");
+    }
 
     if (bin.size > INT_MAX || bin.size < 1)
         return make_error_tuple(env, "badarg", "invalid key");
@@ -379,8 +386,9 @@ do_exec(ErlNifEnv *env, esqlcipher_connection *conn, const ERL_NIF_TERM arg)
     int rc;
     ERL_NIF_TERM eos = enif_make_int(env, 0);
 
-    enif_inspect_iolist_as_binary(env,
-        enif_make_list2(env, arg, eos), &bin);
+    if (!enif_inspect_iolist_as_binary(env, enif_make_list2(env, arg, eos), &bin)) {
+        return make_error_tuple(env, "badarg", "exec statement is not a valid iolist or binary");
+    }
 
     rc = sqlite3_exec(conn->db, (char *) bin.data, NULL, NULL, NULL);
     if (rc != SQLITE_OK)
@@ -411,8 +419,9 @@ do_insert(ErlNifEnv *env, esqlcipher_connection *conn, const ERL_NIF_TERM arg)
     int rc;
     ERL_NIF_TERM eos = enif_make_int(env, 0);
 
-    enif_inspect_iolist_as_binary(env,
-        enif_make_list2(env, arg, eos), &bin);
+    if (!enif_inspect_iolist_as_binary(env, enif_make_list2(env, arg, eos), &bin)) {
+        return make_error_tuple(env, "badarg", "insert statement is not a valid iolist or binary");
+    }
 
     rc = sqlite3_exec(conn->db, (char *) bin.data, NULL, NULL, NULL);
     if (rc != SQLITE_OK)
@@ -474,16 +483,17 @@ bind_cell(ErlNifEnv *env, const ERL_NIF_TERM cell, sqlite3_stmt *stmt, unsigned 
 	    return sqlite3_bind_double(stmt, i, the_double);
 
     if (enif_get_atom(env, cell, the_atom, sizeof(the_atom), ERL_NIF_LATIN1)) {
-	    if (strcmp("undefined", the_atom) == 0) {
+	    if (strcmp("nil", the_atom) == 0) {
 	       return sqlite3_bind_null(stmt, i);
 	    }
 
-	    return sqlite3_bind_text(stmt, i, the_atom, strlen(the_atom), SQLITE_TRANSIENT);
+	    return -1;
     }
 
     /* Bind as text assume it is utf-8 encoded text */
-    if (enif_inspect_iolist_as_binary(env, cell, &the_blob))
+    if (enif_inspect_iolist_as_binary(env, cell, &the_blob)) {
         return sqlite3_bind_text(stmt, i, (char *) the_blob.data, the_blob.size, SQLITE_TRANSIENT);
+    }
 
     /* Check for blob tuple */
     if (enif_get_tuple(env, cell, &arity, &tuple)) {
@@ -493,7 +503,7 @@ bind_cell(ErlNifEnv *env, const ERL_NIF_TERM cell, sqlite3_stmt *stmt, unsigned 
         /* length 2! */
         if (enif_get_atom(env, tuple[0], the_atom, sizeof(the_atom), ERL_NIF_LATIN1)) {
             /* its a blob... */
-            if (0 == strncmp("blob", the_atom, strlen("blob"))) {
+            if (0 == strcmp("blob", the_atom)) {
                 /* with a iolist as argument */
                 if (enif_inspect_iolist_as_binary(env, tuple[1], &the_blob)) {
                     /* kaboom... get the blob */
@@ -583,7 +593,7 @@ make_cell(ErlNifEnv *env, sqlite3_stmt *statement, unsigned int i)
             make_binary(env, sqlite3_column_blob(statement, i),
                 sqlite3_column_bytes(statement, i)));
     case SQLITE_NULL:
-	    return make_atom(env, "undefined");
+	    return make_atom(env, "nil");
     case SQLITE_TEXT:
 	    return make_binary(env, sqlite3_column_text(statement, i),
             sqlite3_column_bytes(statement, i));
