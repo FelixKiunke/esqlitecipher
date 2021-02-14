@@ -1,7 +1,12 @@
 %% @author Maas-Maarten Zeeman <mmzeeman@xs4all.nl>
-%% @copyright 2011 - 2017 Maas-Maarten Zeeman
+%% @author Felix Kiunke <dev@fkiunke.de>
+%% @copyright 2011 - 2021 Maas-Maarten Zeeman, Felix Kiunke
+%% @version 1.2.0
 
-%% @doc Low level erlang API for sqlite3 databases
+%% @doc Low level erlang API for sqlite3 databases.
+%% The actual work happens in an asynchronous low level thread that is started
+%% using {@link start/0}. These functions are implemented in native C.
+%% All functions return immediately; results are sent as a message when ready.
 
 %% Copyright 2011 - 2017 Maas-Maarten Zeeman
 %%
@@ -17,33 +22,47 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 
-%% Adapted by Felix Kiunke <dev@fkiunke.de> for sqlcipher
-
 -module(esqlcipher_nif).
 -author("Maas-Maarten Zeeman <mmzeeman@xs4all.nl>").
+-author("Felix Kiunke <dev@fkiunke.de>").
 
 %% low-level exports
 -export([start/0,
          open/4,
+         close/3,
          key/4,
          rekey/4,
-         set_update_hook/4,
          exec/4,
-         changes/3,
          insert/4,
-         get_autocommit/3,
          prepare/4,
-         multi_step/5,
-         reset/4,
-         finalize/4,
          bind/5,
+         multi_step/5,
+         reset/5,
+         changes/3,
          column_names/4,
          column_types/4,
-         close/3
+         get_autocommit/3,
+         set_update_hook/4
         ]).
 
 -on_load(init/0).
 
+-type connection() :: reference().
+-type statement() :: reference().
+-type sqlite_error() :: {error, {atom(), string()}}.
+%% Error return type.
+%% Contains an error id atom and a reason/error message.
+
+-type sql() :: iodata().
+%% SQL string type.
+
+-type sql_value() :: number() | nil | iodata() | {'$blob', iodata()}.
+%% SQL value type.
+
+-type bind_values() :: [sql_value() | {pos_integer() | atom(), sql_value()}].
+%% List of values for statement parameters (see {@link bind/3}).
+
+%% @doc Load NIF
 init() ->
     NifName = "esqlcipher_nif",
     NifFileName = case code:priv_dir(esqlcipher) of
@@ -52,122 +71,169 @@ init() ->
                   end,
     ok = erlang:load_nif(NifFileName, 0).
 
-%% @doc Start a low level thread which will can handle sqlite3 calls.
-%%
-%% @spec start() -> {ok, connection()} | {error, msg()}
+%% @doc Start a low level thread which can handle sqlite3 calls.
+%% @see esqlcipher:open/2
+%% @see esqlcipher:open_encrypted/3
+-spec start() -> {ok, reference()} | sqlite_error().
 start() ->
     erlang:nif_error(nif_library_not_loaded).
 
 %% @doc Open the specified sqlite3 database.
+%% Sends an asynchronous open command over the connection and returns `ok'
+%% immediately.
 %%
-%% Sends an asynchronous open command over the connection and returns
-%% ok immediately. When the database is opened
+%% Returns a message of the format
 %%
-%%  @spec open(connection(), reference(), pid(), string()) -> ok | {error, message()}
-
+%% `ok | sqlite_error()'
+%% @see esqlcipher:open/2
+%% @see esqlcipher:open_encrypted/3
+-spec open(connection(), reference(), pid(), iodata()) -> ok | sqlite_error().
 open(_Db, _Ref, _Dest, _Filename) ->
     erlang:nif_error(nif_library_not_loaded).
 
-%% @doc Give the encryption key for a specified sqlite3 database.
+%% @doc Close the sqlite3 connection.
 %%
+%% Returns a message of the format
+%%
+%% `ok | sqlite_error()'
+%% @see esqlcipher:close/2
+-spec close(connection(), reference(), pid()) -> ok | sqlite_error().
+close(_Db, _Ref, _Dest) ->
+    erlang:nif_error(nif_library_not_loaded).
+
+%% @doc Give the encryption key for a specified sqlite3 database.
 %% Note that there will be no error if the key is wrong -- try accessing the
 %% database and look for a NOTADB error to check for that!
 %%
-%%  @spec key(connection(), reference(), pid(), string()) -> ok | {error, message()}
-
+%% Returns a message of the format
+%%
+%% `ok | sqlite_error()'
+%% @see esqlcipher:open_encrypted/3
+-spec key(connection(), reference(), pid(), iodata()) -> ok | sqlite_error().
 key(_Db, _Ref, _Dest, _Key) ->
     erlang:nif_error(nif_library_not_loaded).
 
 %% @doc Change the encryption key for a specified sqlite3 database.
-%%
 %% Note that this will only work once the database is decrypted, i.e. key/4 has
-%% been called
+%% been called. On unencrypted databases, it will silently fail/do nothing.
 %%
-%%  @spec rekey(connection(), reference(), pid(), string()) -> ok | {error, message()}
-
+%% Returns a message of the format
+%%
+%% `ok | sqlite_error()'
+%% @see esqlcipher:rekey/3
+-spec rekey(connection(), reference(), pid(), iodata()) -> ok | sqlite_error().
 rekey(_Db, _Ref, _Dest, _Key) ->
     erlang:nif_error(nif_library_not_loaded).
 
-set_update_hook(_Db, _Ref, _Dest, _Pid) ->
-    erlang:nif_error(nif_library_not_loaded).
-
-%% @doc Exec the query.
+%% @doc Execute a query without returning any resulting rows.
 %%
-%% Sends an asynchronous exec command over the connection and returns
-%% ok immediately.
+%% Returns a message of the format
 %%
-%% When the statement is executed Dest will receive message {Ref, answer()}
-%% with answer() integer | {error, reason()}
-%%
-%%  @spec exec(connection(), Ref::reference(), Dest::pid(), string()) -> ok | {error, message()}
+%% `ok | sqlite_error()'
+%% @see esqlcipher:exec/3
+-spec exec(connection(), reference(), pid(), sql()) -> ok | sqlite_error().
 exec(_Db, _Ref, _Dest, _Sql) ->
     erlang:nif_error(nif_library_not_loaded).
 
-%% @doc Get the number of affected rows of last statement
+%% @doc Execute a query, returning the last inserted row's rowid.
 %%
-%% When the statement is executed Dest will receive message {Ref, answer()}
-%% with answer() integer | {error, reason()}
+%% Returns a message of the format
 %%
-changes(_Db, _Ref, _Dest) ->
+%% `{ok, integer()} | sqlite_error()'
+%% @see esqlcipher:insert/3
+-spec insert(connection(), reference(), pid(), sql()) -> ok | sqlite_error().
+insert(_Db, _Ref, _Dest, _Sql) ->
     erlang:nif_error(nif_library_not_loaded).
 
-%% @doc
+%% @doc Create a prepared statement
 %%
-%% @spec prepare(connection(), reference(), pid(), string()) -> ok | {error, message()}
+%% Returns a message of the format
+%%
+%% `{ok} | sqlite_error()'
+%% @see esqlcipher:prepare/3
+%%
+-spec prepare(connection(), reference(), pid(), sql()) -> ok | sqlite_error().
 prepare(_Db, _Ref, _Dest, _Sql) ->
-    erlang:nif_error(nif_library_not_loaded).
-
-%% @doc
-%%
-%% @spec multi_step(connection(), statement(), pos_integer(), reference(), pid()) -> {term(), list(tuple)} | {error, message()}
-multi_step(_Db, _Stmt, _Chunk_Size, _Ref, _Dest) ->
-    erlang:nif_error(nif_library_not_loaded).
-
-%% @doc
-%%
-%% @spec reset(connection(), statement(), reference(), pid()) -> ok | {error, message()}
-reset(_Db, _Stmt, _Ref, _Dest) ->
-    erlang:nif_error(nif_library_not_loaded).
-
-%% @doc
-%%
-%% @spec finalize(connection(), statement(), reference(), pid()) -> ok | {error, message()}
-finalize(_Db, _Stmt, _Ref, _Dest) ->
     erlang:nif_error(nif_library_not_loaded).
 
 %% @doc Bind parameters to a prepared statement.
 %%
-%% @spec bind(connection(), statement(), reference(), pid(), []) -> ok | {error, message()}
+%% Returns a message of the format
+%%
+%% `ok | sqlite_error()'
+%% @see esqlcipher:bind/3
+-spec bind(connection(), statement(), reference(), pid(), bind_values()) -> ok | sqlite_error().
 bind(_Db, _Stmt, _Ref, _Dest, _Args) ->
     erlang:nif_error(nif_library_not_loaded).
 
-%% @doc Retrieve the column names of the prepared statement
+%% @doc Run sqlite3's `step' multiple times to get chunks of rows.
+%% Called internally by {@link esqlcipher:fetch_one/2},
+%% {@link esqlcipher:fetch_chunk/3}, {@link esqlcipher:fetch_all/3} and others.
 %%
-%% @spec column_names(connection(), statement(), reference(), pid()) -> {ok, tuple()} | {error, message()}
+%% Returns a message of the format
+%%
+%% ``{rows | '$done' | '$busy', [tuple()]} | sqlite_error()''
+-spec multi_step(connection(), statement(), pos_integer(), reference(), pid()) -> ok | sqlite_error().
+multi_step(_Db, _Stmt, _Chunk_Size, _Ref, _Dest) ->
+    erlang:nif_error(nif_library_not_loaded).
+
+%% @doc Resets a prepared statement to its initial state, optionally clearing bound values.
+%%
+%% Returns a message of the format
+%%
+%% `ok | sqlite_error()'
+%% @see esqlcipher:reset/3
+-spec reset(connection(), statement(), reference(), pid(), boolean()) -> ok | sqlite_error().
+reset(_Db, _Stmt, _Ref, _Dest, _ClearValues) ->
+    erlang:nif_error(nif_library_not_loaded).
+
+%% @doc Get the number of rows affected by the last update, insert, or delete
+%% statement.
+%%
+%% Returns a message of the format
+%%
+%% `{ok, integer()} | sqlite_error()'
+%% @see esqlcipher:changes/2
+-spec changes(connection(), reference(), pid()) -> ok | sqlite_error().
+changes(_Db, _Ref, _Dest) ->
+    erlang:nif_error(nif_library_not_loaded).
+
+%% @doc Retrieve the column names of the prepared statement.
+%%
+%% Returns a message of the format
+%%
+%% `{ok, tuple()} | sqlite_error()'
+%% @see esqlcipher:column_names/2
+-spec column_names(connection(), statement(), reference(), pid()) -> ok | sqlite_error().
 column_names(_Db, _Stmt, _Ref, _Dest) ->
     erlang:nif_error(nif_library_not_loaded).
 
 %% @doc Retrieve the column types of the prepared statement
 %%
-%% @spec column_types(connection(), statement(), reference(), pid()) -> {ok, tuple()} | {error, message()}
+%% Returns a message of the format
+%%
+%% `{ok, tuple()} | sqlite_error()'
+%% @see esqlcipher:column_types/2
+-spec column_types(connection(), statement(), reference(), pid()) -> ok | sqlite_error().
 column_types(_Db, _Stmt, _Ref, _Dest) ->
     erlang:nif_error(nif_library_not_loaded).
 
-%% @doc Close the connection.
+%% @doc Returns whether or not the database is in autocommit mode.
 %%
-%% @spec close(connection(), reference(), pid()) -> ok | {error, message()}
-close(_Db, _Ref, _Dest) ->
-    erlang:nif_error(nif_library_not_loaded).
-
-
-%% @doc Insert record
+%% Returns a message of the format
 %%
-%% @spec insert(connection(), Ref::reference(), Dest::pid(), string()) -> {ok, integer()} | {error, message()}
-insert(_Db, _Ref, _Dest, _Sql) ->
-    erlang:nif_error(nif_library_not_loaded).
-
-%% @doc Get automcommit
-%%
-%% @spec get_autocommit(connection(), Ref::reference(), Dest::pid()) -> true | false
+%% `boolean()'
+%% @see esqlcipher:get_autocommit/2
+-spec get_autocommit(connection(), reference(), pid()) -> ok | sqlite_error().
 get_autocommit(_Db, _Ref, _Dest) ->
+    erlang:nif_error(nif_library_not_loaded).
+
+%% @doc Set an update hook that will be called for any database changes.
+%%
+%% Returns a message of the format
+%%
+%% `ok | sqlite_error()'
+%% @see esqlcipher:set_update_hook/3
+-spec set_update_hook(connection(), reference(), pid(), pid()) -> ok | sqlite_error().
+set_update_hook(_Db, _Ref, _Dest, _Pid) ->
     erlang:nif_error(nif_library_not_loaded).

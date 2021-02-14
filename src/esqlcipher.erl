@@ -10,10 +10,63 @@
 %%
 %% All functions (except {@link is_encrypted/1}) take an optional `Timeout'
 %% argument. The default value for this timeout is 5 seconds (`5000').
+%% Note that <b>`Timeout' is merely a lower bound</b>. Several functions call
+%% multiple lower level calls, in which case <i>each</i> of those has is given
+%% that timeout. Thus, the actual timeout might be several times the value
+%% of `Timeout' for some functions.
 %%
 %% To open or create a database, use either {@link open/2} or
 %% {@link open_encrypted/3}. These return a database connection that can be used
 %% in the other functions and should be closed afterwards using {@link close/2}.
+%%
+%% == Queries ==
+%% One-off queries that do not return anything can be executed using
+%% {@link exec/3}, {@link exec/4} (with {@section Query Parameters}), or
+%% {@link insert/3} (which returns the row id of the row inserted last).
+%%
+%% In most cases, however, you'll want to use <i>prepared statemtents</i> that
+%% can contain {@section Query Parameters}. These statements are created using
+%% {@link prepare/3}. If it contains parameters, you can then bind values to
+%% those using {@link bind/3} (you can do both in one step using
+%% {@link prepare_bind/4}. Afterwards, you can run the statement using
+%% {@link run/2} (if you don't care about any rows that are possibly returned),
+%% or the `fetch' family ({@link fetch_one/2}, {@link fetch_chunk/3},
+%% {@link fetch_all/3}). You can use {@link column_names/2} and
+%% {@link column_types/2} on a prepared statement to get the actual names and
+%% types of the columns that will be returned by it. Using {@link reset/3}, the
+%% prepared statement's initial state will be restored and you can run it once
+%% more.
+%%
+%% Additionally, there is the {@link q/4} and the {@link foreach/5} and
+%% {@link map/5} higher-order functions. These do not return {ok, _} or
+%% {error, _} tuples; if errors occur, they are thrown.
+%%
+%% === Query Parameters ===
+%% SQLite statements can have parameters that values can be bound to. They take
+%% the following forms
+%% <ul>
+%% <li>`?': Unnamed/anonymous parameters,</li>
+%% <li>`?N', where N is a positive integer: Numbered parameters, and</li>
+%% <li>`:A', `@A', or '$A', where `A' is an alphanumeric identifier.</li>
+%% </ul>
+%% Prefer numbered or named over anonymous parameters and <b>do not mix named
+%% and numbered parameters!</b> See {@link bind/3} for further details!
+%% 
+%% The following <a href="https://www.sqlite.org/datatype3.html">data types</a>
+%% are supported by sqlite3:
+%% <ul>
+%% <li>`INTEGER': for these, just use regular Erlang integers</li>
+%% <li>`REAL': Erlang floats</li>
+%% <li>`TEXT': Only utf-8 encoded binaries, not strings/charlists should be used
+%%    for these! iolists are allowed.</li>
+%% <li>`BLOB': Any binary can be stored exactly as is into a blob. The can be
+%%    passed as ``{'$blob', <<"binary data">>}''.</li>
+%% <li>`NULL': These are translated to the atom `nil'.</li>
+%% </ul>
+%% Note that sqlite3 does not have a boolean data type. Use integers.
+%% Values are translated between Erlang and sqlite3 data types when `bind'ing or
+%% `fetch'ing. Trying to `bind' any other types, such as atoms or booleans, will 
+%% result in an error.
 
 %% Copyright 2011 - 2021 Maas-Maarten Zeeman, Felix Kiunke
 %%
@@ -31,6 +84,7 @@
 
 -module(esqlcipher).
 -author("Maas-Maarten Zeeman <mmzeeman@xs4all.nl>").
+-author("Felix Kiunke <dev@fkiunke.de>").
 
 %% higher-level export
 -export([open/1, open/2,
@@ -43,7 +97,7 @@
          prepare/2, prepare/3,
          bind/2, bind/3,
          prepare_bind/3, prepare_bind/4,
-         reset/1, reset/2,
+         reset/1, reset/2, reset/3,
          run/1, run/2,
          fetch_one/1, fetch_one/2,
          fetch_chunk/2, fetch_chunk/3,
@@ -56,18 +110,19 @@
 
          q/2, q/3, q/4,
          map/3, map/4, map/5,
-         foreach/3, foreach/4, foreach/5]).
+         foreach/3, foreach/4, foreach/5
+        ]).
 
 -define(DEFAULT_TIMEOUT, 5000).
 -define(DEFAULT_CHUNK_SIZE, 5000).
 %% How many times to retry fetching from a busy database. 0 = fail immediately when busy
 -define(MAX_TRIES, 5).
 
--type connection() :: {connection, pid(), plaintext | encrypted}.
+-type connection() :: {connection, reference(), plaintext | encrypted}.
 %% Database connection type.
 %% Returned by {@link open/2} and {@link open_encrypted/3}.
 
--type statement() :: {statement, term(), connection()}.
+-type statement() :: {statement, reference(), connection()}.
 %% Prepared statement type.
 %% Returned by {@link prepare/3} or {@link prepare_bind/4}.
 
@@ -81,8 +136,11 @@
 -type row() :: tuple().
 %% SQL row type.
 
--type sql_value() :: number() | nil | iodata() | {blob, iodata()}.
+-type sql_value() :: number() | nil | iodata() | {'$blob', iodata()}.
 %% SQL value type.
+
+-type bind_values() :: [sql_value() | {pos_integer() | atom(), sql_value()}].
+%% List of values for statement parameters (see {@link bind/3}).
 
 -type map_function(ReturnType) :: fun((Row :: row()) -> ReturnType) | fun((ColNames :: tuple(), Row :: row()) -> ReturnType).
 %% Type of functions used in {@link map/5}.
@@ -315,39 +373,78 @@ prepare(Sql, {connection, Connection, _}=C, Timeout) ->
 
 
 %% @equiv bind(Statement, Args, 5000)
--spec bind(statement(), [sql_value()]) -> ok | sqlite_error().
-bind(Statement, Args) ->
-    bind(Statement, Args, ?DEFAULT_TIMEOUT).
+-spec bind(statement(), [bind_values()]) -> ok | sqlite_error().
+bind(Statement, Values) ->
+    bind(Statement, Values, ?DEFAULT_TIMEOUT).
 
 %% @doc Bind values to a prepared statement created by {@link prepare/3}.
 %% Note that you can also use {@link prepare_bind/4} to prepare and bind a
 %% statement in one step.
 %%
 %% `nil' will be interpreted as `NULL'.
-%% Use `{blob, <<binary>>}' for sqlite `BLOB's.
-%% Since sqlite does not support true booleans, `true' and `false' are invalid;
+%% Use ``{'$blob', <<binary>>}'' for sqlite `BLOB's.
+%% Since sqlite does not have a true boolean type, `true' and `false' are invalid;
 %% use `1' and `0', respectively.
--spec bind(Statement :: statement(), [sql_value()], timeout()) -> ok | sqlite_error().
-bind({statement, Stmt, {connection, Conn, _}}, Args, Timeout) ->
+%%
+%% All forms of bindings supported by sqlite3 are supported
+%% (see also <a href="https://www.sqlite.org/lang_expr.html#varparam">sqlite3 docs</a>):
+%% <ul>
+%% <li>`?': Unnamed/anonymous parameters (these will implicitly be assigned a
+%%          number that is the previously largest assigned number + 1; numbering
+%%          begins at 1),</li>
+%% <li>`?NNN', where 1 ≤ N ≤ 32766: Numbered parameters, and</li>
+%% <li>`:AAA', where `A' is an alphanumeric identifier. These will nternally be
+%%         assigned a number similarly to anonymous parameters, so <b>do not mix
+%%         named and numbered parameters!</b>.<br/>
+%%         <small><i>Sqlite3 also supports the forms `@AAA' and `$AAA' but since
+%%         the initial character (`@'/`$') is part of the name, you would
+%%         actually need to pass ``{'@name', Value}'' or ``{'$name', Value}''.
+%%         `{name, Value}' is automatically interpreted as ``{':name', Value}'',
+%%         so the `:AAA' form should be preferred.</i></small></li>
+%% </ul>
+%% Anonymous parameters of the form `?' are discouraged; <b>prefer named <i>or</i>
+%% numbered parameters</b>.
+%%
+%% `Values' is a list of values that are bound to these parameters. Values can
+%% either be a list of raw values or a list of tuples of the form `{N, Value}' or
+%% `{name, Value}'. Of course, something like ``{myblob, {'$blob', <<"blob">>}}''
+%% is allowed as well.
+-spec bind(Statement :: statement(), [bind_values()], timeout()) -> ok | sqlite_error().
+bind({statement, Stmt, {connection, Conn, _}}, Values, Timeout) ->
     Ref = make_ref(),
-    ok = esqlcipher_nif:bind(Conn, Stmt, Ref, self(), Args),
+    ok = esqlcipher_nif:bind(Conn, Stmt, Ref, self(), bind_values(Values, 1)),
     receive_answer(Ref, Timeout).
 
+%% @doc Transforms a list of bind arguments into a list of tuples that have
+%% either a name or a parameter index in the scheme
+%% <a href="https://www.sqlite.org/lang_expr.html#varparam">used by sqlite3</a>.
+%% @private
+-spec bind_values(bind_values(), pos_integer()) -> [{atom() | pos_integer(), sql_value()}].
+bind_values([], _) -> [];
+bind_values([{N, Value} | Values], I) when is_integer(N) ->
+    true = N > 0,
+    II = if N >= I -> N + 1; true -> I end,
+    [{N, Value} | bind_values(Values, II)];
+bind_values([{Name, Value} | Values], I) when is_atom(Name), Name =/= '$blob' ->
+    [{Name, Value} | bind_values(Values, I + 1)];
+bind_values([Value | Values], I) ->
+    [{I, Value} | bind_values(Values, I + 1)].
 
-%% @equiv prepare_bind(Sql, Args, Connection, 5000)
--spec prepare_bind(sql(), [sql_value()], connection()) -> {ok, statement()} | sqlite_error().
-prepare_bind(Sql, Args, Connection) ->
-    prepare_bind(Sql, Args, Connection, ?DEFAULT_TIMEOUT).
+
+%% @equiv prepare_bind(Sql, Values, Connection, 5000)
+-spec prepare_bind(sql(), [bind_values()], connection()) -> {ok, statement()} | sqlite_error().
+prepare_bind(Sql, Values, Connection) ->
+    prepare_bind(Sql, Values, Connection, ?DEFAULT_TIMEOUT).
 
 %% @doc Prepare an SQL statement and bind values to it.
 %% This is simply {@link prepare/3} and {@link bind/3} in a single step.
--spec prepare_bind(sql(), [sql_value()], connection(), timeout()) -> {ok, statement()} | sqlite_error().
+-spec prepare_bind(sql(), [bind_values()], connection(), timeout()) -> {ok, statement()} | sqlite_error().
 prepare_bind(Sql, [], {connection, _, _}=Connection, Timeout) ->
     prepare(Sql, Connection, Timeout);
-prepare_bind(Sql, Args, {connection, _, _}=Connection, Timeout) ->
+prepare_bind(Sql, Values, {connection, _, _}=Connection, Timeout) ->
     case prepare(Sql, Connection, Timeout) of
         {ok, Statement} ->
-            case bind(Statement, Args, Timeout) of
+            case bind(Statement, Values, Timeout) of
                 ok -> {ok, Statement};
                 {error, _} = Error -> Error
             end;
@@ -356,16 +453,27 @@ prepare_bind(Sql, Args, {connection, _, _}=Connection, Timeout) ->
     end.
 
 
-%% @equiv reset(Statement, 5000)
+%% @equiv reset(Statement, false, 5000)
 -spec reset(statement()) -> ok | sqlite_error().
 reset(Statement) ->
-    reset(Statement, ?DEFAULT_TIMEOUT).
+    reset(Statement, false, ?DEFAULT_TIMEOUT).
+
+%% @equiv reset(Statemennt, ClearValues, 5000)
+-spec reset(statement(), boolean() | timeout()) -> ok | sqlite_error().
+reset(Statement, ClearValues) when is_boolean(ClearValues) ->
+    reset(Statement, ClearValues, ?DEFAULT_TIMEOUT);
+reset(Statement, Timeout) when is_integer(Timeout) ->
+    reset(Statement, false, Timeout).
 
 %% @doc Reset the prepared statement back to its initial state.
--spec reset(Statement :: statement(), timeout()) -> ok | sqlite_error().
-reset({statement, Stmt, {connection, Conn, _}}, Timeout) ->
+%% Once the statement has been reset, you can run it once more. By default, any
+%% values bound to the statement will be retained. Set `ClearValues' to `true'
+%% to change this.
+%% @param ClearValues whether to clear values bound to the statement
+-spec reset(Statement :: statement(), boolean(), timeout()) -> ok | sqlite_error().
+reset({statement, Stmt, {connection, Conn, _}}, ClearValues, Timeout) ->
     Ref = make_ref(),
-    ok = esqlcipher_nif:reset(Conn, Stmt, Ref, self()),
+    ok = esqlcipher_nif:reset(Conn, Stmt, Ref, self(), ClearValues),
     receive_answer(Ref, Timeout).
 
 
@@ -393,7 +501,7 @@ try_multi_step(_Statement, _ChunkSize, _Rest, Tries, _Timeout) when Tries > ?MAX
 try_multi_step(Statement, ChunkSize, Rest, Tries, Timeout) ->
     case multi_step(Statement, ChunkSize, Timeout) of
         {'$busy', Rows} ->
-            % NB: It's possible that the database only becomes busy after a number
+            % NB: It's possible that the database becomes busy only after a number
             % of rows have already been fetched.
             % Exponential backoff:
             timer:sleep(50 + math:pow(2, Tries) * 10),
@@ -424,7 +532,7 @@ fetch_chunk(Statement, ChunkSize, Timeout) ->
 
 
 %% @equiv fetch_one(Statement, 5000)
--spec fetch_one(statement()) -> ok | {ok, row()} | sqlite_error().
+-spec fetch_one(statement()) -> {ok, nil} | {ok, row()} | sqlite_error().
 fetch_one(Statement) ->
     fetch_one(Statement, ?DEFAULT_TIMEOUT).
 
@@ -432,7 +540,7 @@ fetch_one(Statement) ->
 %% @param Statement a prepared sql statement created by {@link prepare/3} or {@link prepare_bind/4}
 %% @returns `{ok, X}' if the statement was executed successfully where `X' is
 %%   either a row in the shape of a tuple or `nil' if no rows where returned
--spec fetch_one(statement(), timeout()) -> ok | {ok, row()} | sqlite_error().
+-spec fetch_one(statement(), timeout()) -> {ok, nil} | {ok, row()} | sqlite_error().
 fetch_one(Statement, Timeout) ->
     case fetch_chunk(Statement, 1, Timeout) of
         {error, _} = Error -> Error;
@@ -503,7 +611,10 @@ fetch_all_internal(Statement, ChunkSize, Rest, Timeout) ->
 changes(Connection) ->
     changes(Connection, ?DEFAULT_TIMEOUT).
 
-%% @doc Return the number of affected rows of the last statement.
+%% @doc Return the number of the rows that have been modified, inserted, or
+%% deleted by the last statement (see the
+%% <a href="https://www.sqlite.org/c3ref/changes.html">sqlite3 docs</a> for
+%% further information).
 -spec changes(Connection :: connection(), timeout()) -> {ok, integer()} | sqlite_error().
 changes({connection, Connection, _}, Timeout) ->
     Ref = make_ref(),
@@ -542,13 +653,13 @@ column_types({statement, Stmt, {connection, Conn, _}}, Timeout) ->
 
 
 %% @equiv get_autocommit(Connection, 5000)
--spec get_autocommit(connection()) -> boolean() | sqlite_error().
+-spec get_autocommit(connection()) -> boolean().
 get_autocommit(Connection) ->
     get_autocommit(Connection, ?DEFAULT_TIMEOUT).
 
 %% @doc Returns whether the database is in <a href="https://sqlite.org/c3ref/get_autocommit.html">autocommit mode</a>.
 %% Autocommit is normally enabled, except within transactions.
--spec get_autocommit(Connection :: connection(), timeout()) -> boolean() | sqlite_error().
+-spec get_autocommit(Connection :: connection(), timeout()) -> boolean().
 get_autocommit({connection, Connection, _}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:get_autocommit(Connection, Ref, self()),
@@ -563,14 +674,14 @@ q(Sql, Connection) ->
 
 %% @equiv q(Sql, Args, Connection, 5000)
 %% @throws sqlite_error()
--spec q(sql(), [sql_value()], connection()) -> [tuple()].
+-spec q(sql(), [bind_values()], connection()) -> [tuple()].
 q(Sql, Args, Connection) ->
     q(Sql, Args, Connection, ?DEFAULT_TIMEOUT).
 
 %% @doc Prepare statement, bind args and return a list with tuples as result.
 %% Errors are thrown, not returned.
 %% @throws sqlite_error()
--spec q(sql(), [sql_value()], connection(), timeout()) -> [tuple()].
+-spec q(sql(), [bind_values()], connection(), timeout()) -> [tuple()].
 q(Sql, Args, Connection, Timeout) ->
     case prepare_bind(Sql, Args, Connection, Timeout) of
         {ok, Statement} ->
@@ -593,7 +704,7 @@ map(F, Sql, {connection, _, _} = Connection) ->
 
 %% @equiv map(F, Sql, [], Connection, 5000)
 %% @throws sqlite_error()
--spec map(map_function(Type), sql(), [sql_value()], connection()) -> [Type].
+-spec map(map_function(Type), sql(), [bind_values()], connection()) -> [Type].
 map(F, Sql, Args, Connection) ->
     map(F, Sql, Args, Connection, ?DEFAULT_TIMEOUT).
 
@@ -603,7 +714,7 @@ map(F, Sql, Args, Connection) ->
 %% @param Sql an SQL query
 %% @param Args values that are bound to `Sql'
 %% @throws sqlite_error()
--spec map(map_function(Type), sql(), [sql_value()], connection(), timeout()) -> [Type].
+-spec map(map_function(Type), sql(), [bind_values()], connection(), timeout()) -> [Type].
 map(F, Sql, Args, Connection, Timeout) ->
     case prepare_bind(Sql, Args, Connection, Timeout) of
         {ok, Statement} ->
@@ -626,7 +737,7 @@ map_s(F, Statement, ColNames, Timeout) when is_function(F, 1) ->
 map_s(F, Statement, ColNames, Timeout) when is_function(F, 2) ->
     case fetch_one(Statement, Timeout) of
         {ok, nil} -> [];
-        {ok, Row} -> [F(ColNames, Row) | map_s(F, ColNames, Statement, Timeout)];
+        {ok, Row} -> [F(ColNames, Row) | map_s(F, Statement, ColNames, Timeout)];
         {error, _} = Error -> throw(Error)
     end.
 
@@ -640,7 +751,7 @@ foreach(F, Sql, {connection, _, _} = Connection) ->
 
 %% @equiv foreach(F, Sql, Args, Connection, 5000)
 %% @throws sqlite_error()
--spec foreach(foreach_function(), sql(), [sql_value()], connection()) -> ok.
+-spec foreach(foreach_function(), sql(), [bind_values()], connection()) -> ok.
 foreach(F, Sql, Args, Connection) ->
     foreach(F, Sql, Args, Connection, ?DEFAULT_TIMEOUT).
 
@@ -651,7 +762,7 @@ foreach(F, Sql, Args, Connection) ->
 %% @param Sql an SQL query
 %% @param Args values that are bound to `Sql'
 %% @throws sqlite_error()
--spec foreach(foreach_function(), sql(), [sql_value()], connection(), timeout()) -> ok.
+-spec foreach(foreach_function(), sql(), [bind_values()], connection(), timeout()) -> ok.
 foreach(F, Sql, Args, Connection, Timeout) ->
     case prepare_bind(Sql, Args, Connection, Timeout) of
         {ok, Statement} ->
@@ -677,14 +788,14 @@ foreach_s(F, Statement, ColNames, Timeout) when is_function(F, 2) ->
         {ok, nil} -> ok;
         {ok, Row} -> 
             F(ColNames, Row),
-            foreach_s(F, ColNames, Statement, Timeout);
+            foreach_s(F, Statement, ColNames, Timeout);
         {error, _} = Error -> throw(Error)
     end.
 
 
 %% @doc Wait for an answer for the request referred as `Ref'.
 %% @private
-%-spec receive_answer(reference(), )
+-spec receive_answer(reference(), timeout()) -> term().
 receive_answer(Ref, Timeout) ->
     Start = os:timestamp(),
     receive

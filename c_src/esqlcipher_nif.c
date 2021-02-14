@@ -217,7 +217,7 @@ command_create()
  *
  */
 static void
-destruct_esqlcipher_connection(ErlNifEnv *env, void *arg)
+destroy_esqlcipher_connection(ErlNifEnv *env, void *arg)
 {
     esqlcipher_connection *db = (esqlcipher_connection *) arg;
     esqlcipher_command *cmd = command_create();
@@ -246,7 +246,7 @@ destruct_esqlcipher_connection(ErlNifEnv *env, void *arg)
 }
 
 static void
-destruct_esqlcipher_statement(ErlNifEnv *env, void *arg)
+destroy_esqlcipher_statement(ErlNifEnv *env, void *arg)
 {
     esqlcipher_statement *stmt = (esqlcipher_statement *) arg;
     sqlite3_finalize(stmt->statement);
@@ -271,7 +271,7 @@ do_open(ErlNifEnv *env, esqlcipher_connection *db, const ERL_NIF_TERM arg)
 
     /* Open the database.
      */
-    rc = sqlite3_open(bin.data, &db->db);
+    rc = sqlite3_open((char *)bin.data, &db->db);
     if (rc != SQLITE_OK) {
         error = make_sqlite3_error_tuple(env, rc, db->db);
         sqlite3_close_v2(db->db);
@@ -463,8 +463,14 @@ do_prepare(ErlNifEnv *env, esqlcipher_connection *conn, const ERL_NIF_TERM arg)
 }
 
 static int
-bind_cell(ErlNifEnv *env, const ERL_NIF_TERM cell, sqlite3_stmt *stmt, unsigned int i)
+bind_cell(ErlNifEnv *env, const ERL_NIF_TERM cell, sqlite3_stmt *stmt)
 {
+    int i;
+    int cell_arity;
+    const ERL_NIF_TERM* cell_tuple;
+    char param_name[MAX_ATOM_LENGTH+2];
+    ERL_NIF_TERM value;
+
     int the_int;
     ErlNifSInt64 the_long_int;
     double the_double;
@@ -473,16 +479,43 @@ bind_cell(ErlNifEnv *env, const ERL_NIF_TERM cell, sqlite3_stmt *stmt, unsigned 
     int arity;
     const ERL_NIF_TERM* tuple;
 
-    if (enif_get_int(env, cell, &the_int))
+    if (!enif_get_tuple(env, cell, &cell_arity, &cell_tuple) || cell_arity != 2) {
+        return -1;
+    }
+
+    // If the first element of the tuple is an integer, take it as the param id
+    if (!enif_get_int(env, cell_tuple[0], &i)) {
+        // Otherwise, it must be an atom:
+        if (enif_get_atom(env, cell_tuple[0], param_name + 1, MAX_ATOM_LENGTH + 1, ERL_NIF_LATIN1)) {
+            // The first character (:, @, or $) is part of the parameter name;
+            // if the passed atom contains none of these characters, we prefix :
+            if (param_name[1] == ':' || param_name[1] == '@' || param_name[1] == '$') {
+                // Get the id for the named parameter
+                i = sqlite3_bind_parameter_index(stmt, param_name + 1);
+            } else {
+                param_name[0] = ':';
+                i = sqlite3_bind_parameter_index(stmt, param_name);
+            }
+            if (i <= 0) { // Non-existent parameter
+                return -2;
+            }
+        } else {
+            return -1;
+        }
+    }
+
+    value = cell_tuple[1];
+
+    if (enif_get_int(env, value, &the_int))
 	    return sqlite3_bind_int(stmt, i, the_int);
 
-    if (enif_get_int64(env, cell, &the_long_int))
+    if (enif_get_int64(env, value, &the_long_int))
         return sqlite3_bind_int64(stmt, i, the_long_int);
 
-    if (enif_get_double(env, cell, &the_double))
+    if (enif_get_double(env, value, &the_double))
 	    return sqlite3_bind_double(stmt, i, the_double);
 
-    if (enif_get_atom(env, cell, the_atom, sizeof(the_atom), ERL_NIF_LATIN1)) {
+    if (enif_get_atom(env, value, the_atom, sizeof(the_atom), ERL_NIF_LATIN1)) {
 	    if (strcmp("nil", the_atom) == 0) {
 	       return sqlite3_bind_null(stmt, i);
 	    }
@@ -491,19 +524,19 @@ bind_cell(ErlNifEnv *env, const ERL_NIF_TERM cell, sqlite3_stmt *stmt, unsigned 
     }
 
     /* Bind as text assume it is utf-8 encoded text */
-    if (enif_inspect_iolist_as_binary(env, cell, &the_blob)) {
+    if (enif_inspect_iolist_as_binary(env, value, &the_blob)) {
         return sqlite3_bind_text(stmt, i, (char *) the_blob.data, the_blob.size, SQLITE_TRANSIENT);
     }
 
     /* Check for blob tuple */
-    if (enif_get_tuple(env, cell, &arity, &tuple)) {
+    if (enif_get_tuple(env, value, &arity, &tuple)) {
         if (arity != 2)
             return -1;
 
         /* length 2! */
         if (enif_get_atom(env, tuple[0], the_atom, sizeof(the_atom), ERL_NIF_LATIN1)) {
             /* its a blob... */
-            if (0 == strcmp("blob", the_atom)) {
+            if (0 == strcmp("$blob", the_atom)) {
                 /* with a iolist as argument */
                 if (enif_inspect_iolist_as_binary(env, tuple[1], &the_blob)) {
                     /* kaboom... get the blob */
@@ -519,32 +552,27 @@ bind_cell(ErlNifEnv *env, const ERL_NIF_TERM cell, sqlite3_stmt *stmt, unsigned 
 static ERL_NIF_TERM
 do_bind(ErlNifEnv *env, sqlite3 *db, sqlite3_stmt *stmt, const ERL_NIF_TERM arg)
 {
-    int parameter_count = sqlite3_bind_parameter_count(stmt);
-    int i, is_list, r;
+    int rc;
     ERL_NIF_TERM list, head, tail;
-    unsigned int list_length;
 
-    is_list = enif_get_list_length(env, arg, &list_length);
-    if (!is_list) {
+    if (!enif_is_list(env, arg)) {
 	    return make_error_tuple(env, "badarg", "bad arg list");
     }
-    if (parameter_count != list_length) {
-	    return make_error_tuple(env, "badarg", "wrong arg length");
-    }
-
-    sqlite3_reset(stmt);
 
     list = arg;
-    for (i=0; i < list_length; i++) {
-	    enif_get_list_cell(env, list, &head, &tail);
-	    r = bind_cell(env, head, stmt, i+1);
-	    if (r == -1) {
-	        return make_error_tuple(env, "badarg", "wrong_type");
+
+    while (enif_get_list_cell(env, list, &head, &tail)) {
+        rc = bind_cell(env, head, stmt);
+        if (rc == -2) {
+            return make_error_tuple(env, "badarg", "invalid parameter name");
         }
-	    if (r != SQLITE_OK) {
-	        return make_sqlite3_error_tuple(env, r, db);
+        if (rc < 0) {
+            return make_error_tuple(env, "badarg", "invalid sql argument type");
         }
-	    list = tail;
+        if (rc != SQLITE_OK) {
+            return make_sqlite3_error_tuple(env, rc, db);
+        }
+        list = tail;
     }
 
     return make_atom(env, "ok");
@@ -589,7 +617,7 @@ make_cell(ErlNifEnv *env, sqlite3_stmt *statement, unsigned int i)
     case SQLITE_FLOAT:
 	    return enif_make_double(env, sqlite3_column_double(statement, i));
     case SQLITE_BLOB:
-        return enif_make_tuple2(env, make_atom(env, "blob"),
+        return enif_make_tuple2(env, make_atom(env, "$blob"),
             make_binary(env, sqlite3_column_blob(statement, i),
                 sqlite3_column_bytes(statement, i)));
     case SQLITE_NULL:
@@ -668,12 +696,32 @@ do_multi_step(ErlNifEnv *env, sqlite3 *db, sqlite3_stmt *stmt, const ERL_NIF_TER
 }
 
 static ERL_NIF_TERM
-do_reset(ErlNifEnv *env, sqlite3 *db, sqlite3_stmt *stmt)
+do_reset(ErlNifEnv *env, sqlite3 *db, sqlite3_stmt *stmt, const ERL_NIF_TERM arg)
 {
+    char the_atom[MAX_ATOM_LENGTH+1];
+    int clear_values;
+
+    if (enif_get_atom(env, arg, the_atom, sizeof(the_atom), ERL_NIF_LATIN1)) {
+        if (0 == strcmp("false", the_atom)) {
+            clear_values = 0;
+        } else if (0 == strcmp("true", the_atom)) {
+            clear_values = 1;
+        } else {
+            make_error_tuple(env, "badarg", "clear_values must be a boolean");
+        }
+    } else {
+        make_error_tuple(env, "badarg", "clear_values must be a boolean atom");
+    }
+
     int rc = sqlite3_reset(stmt);
 
-    if (rc == SQLITE_OK)
+    if (rc == SQLITE_OK && clear_values == 1) {
+        rc = sqlite3_clear_bindings(stmt);
+    }
+
+    if (rc == SQLITE_OK) {
         return make_atom(env, "ok");
+    }
 
     return make_sqlite3_error_tuple(env, rc, db);
 }
@@ -788,7 +836,7 @@ evaluate_command(esqlcipher_command *cmd, esqlcipher_connection *conn)
     case cmd_multi_step:
         return do_multi_step(cmd->env, conn->db, stmt->statement, cmd->arg);
     case cmd_reset:
-	    return do_reset(cmd->env, conn->db, stmt->statement);
+	    return do_reset(cmd->env, conn->db, stmt->statement, cmd->arg);
     case cmd_bind:
 	    return do_bind(cmd->env, conn->db, stmt->statement, cmd->arg);
     case cmd_column_names:
@@ -1259,7 +1307,7 @@ esqlcipher_reset(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     esqlcipher_command *cmd = NULL;
     ErlNifPid pid;
 
-    if (argc != 4)
+    if (argc != 5)
 	    return enif_make_badarg(env);
     if (!enif_get_resource(env, argv[0], esqlcipher_connection_type, (void **) &conn))
 	    return enif_make_badarg(env);
@@ -1280,6 +1328,7 @@ esqlcipher_reset(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     cmd->ref = enif_make_copy(cmd->env, argv[2]);
     cmd->pid = pid;
     cmd->stmt = enif_make_copy(cmd->env, argv[1]);
+    cmd->arg = enif_make_copy(cmd->env, argv[4]);
 
     return push_command(env, conn, cmd);
 }
@@ -1395,13 +1444,13 @@ on_load(ErlNifEnv* env, void** priv, ERL_NIF_TERM info)
     ErlNifResourceType *rt;
      
     rt = enif_open_resource_type(env, "esqlcipher_nif", "esqlcipher_connection_type",
-				destruct_esqlcipher_connection, ERL_NIF_RT_CREATE, NULL);
+				destroy_esqlcipher_connection, ERL_NIF_RT_CREATE, NULL);
     if (!rt)
 	    return -1;
     esqlcipher_connection_type = rt;
 
     rt =  enif_open_resource_type(env, "esqlcipher_nif", "esqlcipher_statement_type",
-				   destruct_esqlcipher_statement, ERL_NIF_RT_CREATE, NULL);
+				   destroy_esqlcipher_statement, ERL_NIF_RT_CREATE, NULL);
     if (!rt)
 	    return -1;
     esqlcipher_statement_type = rt;
@@ -1424,21 +1473,20 @@ static int on_upgrade(ErlNifEnv* env, void** priv, void** old_priv_data, ERL_NIF
 static ErlNifFunc nif_funcs[] = {
     {"start", 0, esqlcipher_start},
     {"open", 4, esqlcipher_open},
+    {"close", 3, esqlcipher_close},
     {"key", 4, esqlcipher_key},
     {"rekey", 4, esqlcipher_rekey},
-    {"set_update_hook", 4, set_update_hook},
     {"exec", 4, esqlcipher_exec},
-    {"changes", 3, esqlcipher_changes},
-    {"prepare", 4, esqlcipher_prepare},
     {"insert", 4, esqlcipher_insert},
-    {"get_autocommit", 3, esqlcipher_get_autocommit},
-    {"multi_step", 5, esqlcipher_multi_step},
-    {"reset", 4, esqlcipher_reset},
-    // TODO: {"esqlcipher_bind", 3, esqlcipher_bind_named},
+    {"prepare", 4, esqlcipher_prepare},
     {"bind", 5, esqlcipher_bind},
+    {"multi_step", 5, esqlcipher_multi_step},
+    {"reset", 5, esqlcipher_reset},
+    {"changes", 3, esqlcipher_changes},
     {"column_names", 4, esqlcipher_column_names},
     {"column_types", 4, esqlcipher_column_types},
-    {"close", 3, esqlcipher_close}
+    {"get_autocommit", 3, esqlcipher_get_autocommit},
+    {"set_update_hook", 4, set_update_hook}
 };
 
 ERL_NIF_INIT(esqlcipher_nif, nif_funcs, on_load, on_reload, on_upgrade, NULL)
