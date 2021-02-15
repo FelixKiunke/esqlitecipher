@@ -46,8 +46,9 @@
 %% the following forms
 %% <ul>
 %% <li>`?': Unnamed/anonymous parameters,</li>
-%% <li>`?N', where N is a positive integer: Numbered parameters, and</li>
-%% <li>`:A', `@A', or '$A', where `A' is an alphanumeric identifier.</li>
+%% <li>`?NNN', where `NNN' is a positive integer: Numbered parameters, and</li>
+%% <li>`:AAA', where `AAA' is an alphanumeric identifier. <small><i>(sqlite's
+%%   `@AAA' and `$AAA' forms are also supported but discouraged).</i></small></li>
 %% </ul>
 %% Prefer numbered or named over anonymous parameters and <b>do not mix named
 %% and numbered parameters!</b> See {@link bind/3} for further details!
@@ -359,7 +360,7 @@ insert(Sql, {connection, Connection, _}, Timeout) ->
 prepare(Sql, Connection) ->
     prepare(Sql, Connection, ?DEFAULT_TIMEOUT).
 
-%% @doc Prepare (i.e. compile) an SQL statement.
+%% @doc Prepare (that is, compile) an SQL statement.
 %% Value placeholder can then be bound using {@link bind/3}. Or, you can do both
 %% in one step using {@link prepare_bind/4}!
 -spec prepare(sql(), connection(), timeout()) -> {ok, statement()} | sqlite_error().
@@ -392,15 +393,18 @@ bind(Statement, Values) ->
 %% <li>`?': Unnamed/anonymous parameters (these will implicitly be assigned a
 %%          number that is the previously largest assigned number + 1; numbering
 %%          begins at 1),</li>
-%% <li>`?NNN', where 1 ≤ N ≤ 32766: Numbered parameters, and</li>
-%% <li>`:AAA', where `A' is an alphanumeric identifier. These will nternally be
-%%         assigned a number similarly to anonymous parameters, so <b>do not mix
-%%         named and numbered parameters!</b>.<br/>
+%% <li>`?NNN', where 1 ≤ `NNN' ≤ 32766: Numbered parameters, and</li>
+%% <li>`:AAA', where `AAA' is an alphanumeric identifier. These will internally
+%%         be assigned a number similarly to anonymous parameters, so <b>do not
+%%         mix named and numbered parameters</b> or you will probably get
+%%         unexpected results.<br/>
 %%         <small><i>Sqlite3 also supports the forms `@AAA' and `$AAA' but since
 %%         the initial character (`@'/`$') is part of the name, you would
 %%         actually need to pass ``{'@name', Value}'' or ``{'$name', Value}''.
 %%         `{name, Value}' is automatically interpreted as ``{':name', Value}'',
-%%         so the `:AAA' form should be preferred.</i></small></li>
+%%         so the `:AAA' form should be preferred. Do not use `$blob' as a
+%%         parameter name as ``{'$blob', _}'' tuple will be interpreted as the
+%%         sqlite `BLOB' datatype.</i></small></li>
 %% </ul>
 %% Anonymous parameters of the form `?' are discouraged; <b>prefer named <i>or</i>
 %% numbered parameters</b>.
