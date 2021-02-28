@@ -134,19 +134,19 @@
 -type sql() :: iodata().
 %% SQL string type.
 
--type row() :: tuple().
-%% SQL row type.
-
 -type sql_value() :: number() | nil | iodata() | {'$blob', iodata()}.
 %% SQL value type.
 
 -type bind_values() :: [sql_value() | {pos_integer() | atom(), sql_value()}].
 %% List of values for statement parameters (see {@link bind/3}).
 
--type map_function(ReturnType) :: fun((Row :: row()) -> ReturnType) | fun((ColNames :: tuple(), Row :: row()) -> ReturnType).
+-type row() :: [sql_value()].
+%% SQL row type.
+
+-type map_function(ReturnType) :: fun((Row :: row()) -> ReturnType) | fun((ColNames :: [atom()], Row :: row()) -> ReturnType).
 %% Type of functions used in {@link map/5}.
 
--type foreach_function() :: fun((Row :: row()) -> any()) | fun((ColNames :: tuple(), Row :: row()) -> any()).
+-type foreach_function() :: fun((Row :: row()) -> any()) | fun((ColNames :: [atom()], Row :: row()) -> any()).
 %% Type of functions used in {@link foreach/5}.
 
 
@@ -297,7 +297,7 @@ rekey(Key, {connection, Conn, encrypted}, Timeout) ->
 
 
 %% @equiv set_update_hook(Pid, Connection, 5000)
--spec set_update_hook(pid(), connection()) -> ok | sqlite_error().
+-spec set_update_hook(pid(), connection()) -> ok.
 set_update_hook(Pid, Connection) ->
     set_update_hook(Pid, Connection, ?DEFAULT_TIMEOUT).
 
@@ -305,7 +305,7 @@ set_update_hook(Pid, Connection) ->
 %% Messages will come in the shape of `{Action, Table :: string(), Id :: integer()}',
 %% where `Action' will be either `insert', `update' or `delete' and `Id' will be
 %% the affected row id (i.e. the `INTEGER PRIMARY KEY' if the table has one).
--spec set_update_hook(pid(), connection(), timeout()) -> ok | sqlite_error().
+-spec set_update_hook(pid(), connection(), timeout()) -> ok.
 set_update_hook(Pid, {connection, Connection, _}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:set_update_hook(Connection, Ref, self(), Pid),
@@ -531,7 +531,7 @@ fetch_chunk(Statement, ChunkSize) ->
 %%   ``{'$done', [...]}'' if these where the last rows
 -spec fetch_chunk(statement(), pos_integer(), timeout()) ->
     {rows | '$done', [row()]} | sqlite_error().
-fetch_chunk(Statement, ChunkSize, Timeout) ->
+fetch_chunk(Statement, ChunkSize, Timeout) when ChunkSize > 0 ->
     try_multi_step(Statement, ChunkSize, [], 0, Timeout).
 
 
@@ -562,7 +562,7 @@ run(Statement) ->
 %% If you want to ensure that a query finishes correctly, returning exactly zero
 %% rows, use:
 %%
-%% `{ok, nil} = {@link fetch_one/2. fetch_one}(Statement, Timeout)'
+%% `{ok, nil} =' {@link fetch_one/2. `fetch_one'}`(Statement, Timeout)'
 %%
 %% @returns `ok' if the query finishes without an error,
 %%   whether or not it returns any rows.
@@ -619,7 +619,7 @@ changes(Connection) ->
 %% deleted by the last statement (see the
 %% <a href="https://www.sqlite.org/c3ref/changes.html">sqlite3 docs</a> for
 %% further information).
--spec changes(Connection :: connection(), timeout()) -> {ok, integer()} | sqlite_error().
+-spec changes(Connection :: connection(), timeout()) -> integer().
 changes({connection, Connection, _}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:changes(Connection, Ref, self()),
@@ -627,12 +627,12 @@ changes({connection, Connection, _}, Timeout) ->
 
 
 %% @equiv column_names(Statement, 5000)
--spec column_names(statement()) -> tuple().
+-spec column_names(statement()) -> [binary()].
 column_names(Statement) ->
     column_names(Statement, ?DEFAULT_TIMEOUT).
 
 %% @doc Return the column names of the prepared statement.
--spec column_names(Statement :: statement(), timeout()) -> tuple().
+-spec column_names(Statement :: statement(), timeout()) -> [binary()].
 column_names({statement, Stmt, {connection, Conn, _}}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:column_names(Conn, Stmt, Ref, self()),
@@ -641,14 +641,14 @@ column_names({statement, Stmt, {connection, Conn, _}}, Timeout) ->
 
 
 %% @equiv column_types(Statement, 5000)
--spec column_types(statement()) -> tuple().
+-spec column_types(statement()) -> [binary()].
 column_types(Stmt) ->
     column_types(Stmt, ?DEFAULT_TIMEOUT).
 
 %% @doc Return the declared column types of the prepared statement.
 %% Note that since sqlite3 is dynamically typed, actual column values need not
 %% necessarily conform to the declared type
--spec column_types(statement(), timeout()) -> tuple().
+-spec column_types(statement(), timeout()) -> [binary()].
 column_types({statement, Stmt, {connection, Conn, _}}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:column_types(Conn, Stmt, Ref, self()),
@@ -803,9 +803,11 @@ foreach_s(F, Statement, ColNames, Timeout) when is_function(F, 2) ->
 receive_answer(Ref, Timeout) ->
     Start = os:timestamp(),
     receive
+        {esqlcipher_raise, Ref, Error} ->
+            error(Error);
         {esqlcipher, Ref, Resp} ->
             Resp;
-        {esqlcipher, _, _}=StaleAnswer ->
+        {Type, _, _} = StaleAnswer when (Type == esqlcipher) or (Type == esqlcipher_raise) ->
             error_logger:warning_msg("Esqlcipher: Ignoring stale answer ~p~n", [StaleAnswer]),
             PassedMics = timer:now_diff(os:timestamp(), Start) div 1000,
             NewTimeout = case Timeout - PassedMics of

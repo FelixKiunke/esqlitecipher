@@ -55,7 +55,7 @@ enc_test_suite() -> [
             ok = esqlcipher:close(Db),
             {error, {baddb, _}} = esqlcipher:open_encrypted(Filename, "1234"),
             {ok, Db2} = esqlcipher:open_encrypted(Filename, "password"),
-            [{1}] = esqlcipher:q("select a from test", Db2),
+            [[1]] = esqlcipher:q("select a from test", Db2),
             ok = esqlcipher:close(Db2),
             ok
         end)}
@@ -74,7 +74,7 @@ enc_test_suite() -> [
             {error, {baddb, _}} = esqlcipher:open(Filename),
             {error, {baddb, _}} = esqlcipher:open_encrypted(Filename, "password"),
             {ok, Db2} = esqlcipher:open_encrypted(Filename, "1234"),
-            [{1}] = esqlcipher:q("select a from test", Db2),
+            [[1]] = esqlcipher:q("select a from test", Db2),
             ok = esqlcipher:close(Db2),
             ok
         end)}
@@ -97,7 +97,7 @@ test_suite() -> [
     fun({Db, Filename, Type}) -> {"open_reopen", ?_test(begin
             ok = esqlcipher:exec("CREATE TABLE test (val INTEGER);", Db),
             ok = esqlcipher:exec("INSERT INTO test (val) VALUES (1), (2), (3);", Db),
-            {ok, 3} = esqlcipher:changes(Db),
+            3 = esqlcipher:changes(Db),
             esqlcipher:close(Db),
             {ok, Db2} = case Type of
                 encrypted -> esqlcipher:open_encrypted(Filename, "password");
@@ -107,7 +107,7 @@ test_suite() -> [
                 memory ->
                     {error, {sqlite_error, _}} = esqlcipher:exec("SELECT val FROM test LIMIT 2;", Db2);
                 _ ->
-                    [{1}, {2}] = esqlcipher:q("SELECT val FROM test LIMIT 2;", Db2)
+                    [[1], [2]] = esqlcipher:q("SELECT val FROM test LIMIT 2;", Db2)
             end,
             ok = esqlcipher:close(Db2),
             file:write_file("/Users/Felix/git/esqlcipher/test.txt", "hallo"),
@@ -123,13 +123,13 @@ test_suite() -> [
             end,
             ok = esqlcipher:exec("CREATE TABLE test (val INTEGER);", Db),
             ok = esqlcipher:exec("INSERT INTO test (val) VALUES (1), (2), (3);", Db),
-            {ok, 3} = esqlcipher:changes(Db),
-            {ok, 0} = esqlcipher:changes(Db2),
+            3 = esqlcipher:changes(Db),
+            0 = esqlcipher:changes(Db2),
             case Type of
                 memory ->
                     {error, {sqlite_error, _}} = esqlcipher:exec("SELECT val FROM test LIMIT 2;", Db2);
                 _ ->
-                    [{1}, {2}] = esqlcipher:q("SELECT val FROM test LIMIT 2;", Db2)
+                    [[1], [2]] = esqlcipher:q("SELECT val FROM test LIMIT 2;", Db2)
             end,
             ok = esqlcipher:close(Db2),
             ok
@@ -142,12 +142,12 @@ test_suite() -> [
             {ok, Db2} = esqlcipher:open(Fn2),
             ok = esqlcipher:exec("CREATE TABLE test (val INTEGER);", Db),
             ok = esqlcipher:exec("INSERT INTO test (val) VALUES (1), (2), (3);", Db),
-            {ok, 3} = esqlcipher:changes(Db),
+            3 = esqlcipher:changes(Db),
             ok = esqlcipher:exec("CREATE TABLE test (val INTEGER);", Db2),
             ok = esqlcipher:exec("INSERT INTO test (val) VALUES (4), (5);", Db2),
-            {ok, 2} = esqlcipher:changes(Db2),
-            [{4}, {5}] = esqlcipher:q("SELECT val FROM test LIMIT 2;", Db2),
-            [{1}, {2}] = esqlcipher:q("SELECT val FROM test LIMIT 2;", Db),
+            2 = esqlcipher:changes(Db2),
+            [[4], [5]] = esqlcipher:q("SELECT val FROM test LIMIT 2;", Db2),
+            [[1], [2]] = esqlcipher:q("SELECT val FROM test LIMIT 2;", Db),
             ok = esqlcipher:close(Db2),
             file:delete(Fn2),
             ok
@@ -186,19 +186,19 @@ test_suite() -> [
             ok = esqlcipher:exec("begin;", Db),
             ok = esqlcipher:exec("create table test_table(one varchar(10), two int);", Db),
             ok = esqlcipher:exec(["insert into test_table values(", "'hello1'", ",", "10" ");"], Db),
-            {ok, 1} = esqlcipher:changes(Db),
+            1 = esqlcipher:changes(Db),
 
             ok = esqlcipher:exec(["insert into test_table values(", "'hello2'", ",", "11" ");"], Db),
-            {ok, 1} = esqlcipher:changes(Db),
+            1 = esqlcipher:changes(Db),
             ok = esqlcipher:exec(["insert into test_table values(", "'hello3'", ",", "12" ");"], Db),
-            {ok, 1} = esqlcipher:changes(Db),
+            1 = esqlcipher:changes(Db),
             ok = esqlcipher:exec(["insert into test_table values(", "'hello4'", ",", "13" ");"], Db),
-            {ok, 1} = esqlcipher:changes(Db),
+            1 = esqlcipher:changes(Db),
             ok = esqlcipher:exec("commit;", Db),
             ok = esqlcipher:exec("select * from test_table;", Db),
 
             ok = esqlcipher:exec("delete from test_table;", Db),
-            {ok, 4} = esqlcipher:changes(Db),
+            4 = esqlcipher:changes(Db),
             
             ok
         end)}
@@ -211,12 +211,12 @@ test_suite() -> [
             {ok, Statement} = esqlcipher:prepare("insert into test_table values('one', 2)", Db),
 
             {ok, nil} = esqlcipher:fetch_one(Statement),
-            {ok, 1} = esqlcipher:changes(Db),
+            1 = esqlcipher:changes(Db),
 
             ok = esqlcipher:exec(["insert into test_table values(", "'hello4'", ",", "13" ");"], Db),
 
             %% Check if the values are there.
-            [{<<"one">>, 2}, {<<"hello4">>, 13}] = esqlcipher:q("select * from test_table order by two", Db),
+            [[<<"one">>, 2], [<<"hello4">>, 13]] = esqlcipher:q("select * from test_table order by two", Db),
             esqlcipher:exec("commit;", Db),
 
             ok
@@ -260,24 +260,24 @@ test_suite() -> [
 
             ?assertEqual([],
                 esqlcipher:q("select one, two from test_table where two = '2'", Db)),
-            ?assertEqual([{<<"three">>, 4}],
+            ?assertEqual([[<<"three">>, 4]],
                 esqlcipher:q("select one, two from test_table where two = 4", Db)),
-            ?assertEqual([{<<"five">>, 6}],
+            ?assertEqual([[<<"five">>, 6]],
                 esqlcipher:q("select one, two from test_table where two = 6", Db)),
-            ?assertEqual([{<<"seven">>, 8}],
+            ?assertEqual([[<<"seven">>, 8]],
                 esqlcipher:q("select one, two from test_table where two = 8", Db)),
-            ?assertEqual([{<<"nine">>, 10}],
+            ?assertEqual([[<<"nine">>, 10]],
                 esqlcipher:q("select one, two from test_table where two = 10", Db)),
-            ?assertEqual([{{'$blob', <<$e,$l,$e,$v,$e,$n,0>>}, 12}],
+            ?assertEqual([[{'$blob', <<$e,$l,$e,$v,$e,$n,0>>}, 12]],
                 esqlcipher:q("select one, two from test_table where two = 12", Db)),
 
-            ?assertEqual([{<<"int64">>, 308553449069486081}],
+            ?assertEqual([[<<"int64">>, 308553449069486081]],
                 esqlcipher:q("select one, two from test_table where one = 'int64';", Db)),
-            ?assertEqual([{<<"negative_int64">>, -308553449069486081}],
+            ?assertEqual([[<<"negative_int64">>, -308553449069486081]],
                 esqlcipher:q("select one, two from test_table where one = 'negative_int64';", Db)),
 
             %% utf-8
-            ?assertEqual([{<<228,184,138,230,181,183>>, 100}],
+            ?assertEqual([[<<228,184,138,230,181,183>>, 100]],
                 esqlcipher:q("select one, two from test_table where two = 100", Db)),
 
             ok
@@ -292,11 +292,11 @@ test_suite() -> [
 
             ?assertThrow({error, {badarg, _}}, esqlcipher:q(<<"SELECT count(type) FROM sqlite_master WHERE type='table' AND name=?;">>,
                         [test_table], Db)),
-            ?assertEqual([{1}], esqlcipher:q(<<"SELECT count(type) FROM sqlite_master WHERE type='table' AND name=?;">>,
+            ?assertEqual([[1]], esqlcipher:q(<<"SELECT count(type) FROM sqlite_master WHERE type='table' AND name=?;">>,
                         ["test_table"], Db)),
-            ?assertEqual([{1}], esqlcipher:q(<<"SELECT count(type) FROM sqlite_master WHERE type='table' AND name=?;">>,
+            ?assertEqual([[1]], esqlcipher:q(<<"SELECT count(type) FROM sqlite_master WHERE type='table' AND name=?;">>,
                         [<<"test_table">>], Db)),
-            ?assertEqual([{1}], esqlcipher:q(<<"SELECT count(type) FROM sqlite_master WHERE type='table' AND name=?;">>,
+            ?assertEqual([[1]], esqlcipher:q(<<"SELECT count(type) FROM sqlite_master WHERE type='table' AND name=?;">>,
                         [[<<"test_table">>]], Db)),
 
             ok
@@ -313,40 +313,40 @@ test_suite() -> [
 
             %% All columns
             {ok, Stmt} = esqlcipher:prepare("select * from test_table", Db),
-            {one, two} =  esqlcipher:column_names(Stmt),
-            {ok, {<<"hello1">>, 10}} = esqlcipher:fetch_one(Stmt),
-            {one, two} =  esqlcipher:column_names(Stmt),
-            {ok, {<<"hello2">>, 20}} = esqlcipher:fetch_one(Stmt),
-            {one, two} =  esqlcipher:column_names(Stmt),
+            [<<"one">>, <<"two">>] =  esqlcipher:column_names(Stmt),
+            {ok, [<<"hello1">>, 10]} = esqlcipher:fetch_one(Stmt),
+            [<<"one">>, <<"two">>] =  esqlcipher:column_names(Stmt),
+            {ok, [<<"hello2">>, 20]} = esqlcipher:fetch_one(Stmt),
+            [<<"one">>, <<"two">>] =  esqlcipher:column_names(Stmt),
             ok = esqlcipher:run(Stmt),
-            {one, two} =  esqlcipher:column_names(Stmt),
+            [<<"one">>, <<"two">>] =  esqlcipher:column_names(Stmt),
 
             %% One column
             {ok, Stmt2} = esqlcipher:prepare("select two from test_table", Db),
-            {two} =  esqlcipher:column_names(Stmt2),
-            {ok, {10}} = esqlcipher:fetch_one(Stmt2),
-            {two} =  esqlcipher:column_names(Stmt2),
-            {ok, {20}} = esqlcipher:fetch_one(Stmt2),
-            {two} =  esqlcipher:column_names(Stmt2),
+            [<<"two">>] =  esqlcipher:column_names(Stmt2),
+            {ok, [10]} = esqlcipher:fetch_one(Stmt2),
+            [<<"two">>] =  esqlcipher:column_names(Stmt2),
+            {ok, [20]} = esqlcipher:fetch_one(Stmt2),
+            [<<"two">>] =  esqlcipher:column_names(Stmt2),
             {ok, nil} = esqlcipher:fetch_one(Stmt2),
-            {two} =  esqlcipher:column_names(Stmt2),
+            [<<"two">>] =  esqlcipher:column_names(Stmt2),
 
             %% No columns
             {ok, Stmt3} = esqlcipher:prepare("values(1);", Db),
-            {column1} =  esqlcipher:column_names(Stmt3),
-            {ok, {1}} = esqlcipher:fetch_one(Stmt3),
-            {column1} =  esqlcipher:column_names(Stmt3),
+            [<<"column1">>] =  esqlcipher:column_names(Stmt3),
+            {ok, [1]} = esqlcipher:fetch_one(Stmt3),
+            [<<"column1">>] =  esqlcipher:column_names(Stmt3),
 
             %% Things get a bit weird when you retrieve the column name
             %% when calling an aggragage function.
             {ok, Stmt4} = esqlcipher:prepare("select date('now');", Db),
-            {'date(\'now\')'} =  esqlcipher:column_names(Stmt4),
-            {ok, {Date}} = esqlcipher:fetch_one(Stmt4),
+            [<<"date('now')">>] =  esqlcipher:column_names(Stmt4),
+            {ok, [Date]} = esqlcipher:fetch_one(Stmt4),
             true = is_binary(Date),
 
             %% Some statements have no column names
             {ok, Stmt5} = esqlcipher:prepare("create table dummy(a, b, c);", Db),
-            {} = esqlcipher:column_names(Stmt5),
+            [] = esqlcipher:column_names(Stmt5),
 
             ok
         end)}
@@ -362,17 +362,17 @@ test_suite() -> [
 
             %% All columns
             {ok, Stmt} = esqlcipher:prepare("select * from test_table", Db),
-            {'varchar(10)', int} =  esqlcipher:column_types(Stmt),
-            {ok, {<<"hello1">>, 10}} = esqlcipher:fetch_one(Stmt),
-            {'varchar(10)', int} =  esqlcipher:column_types(Stmt),
-            {ok, {<<"hello2">>, 20}} = esqlcipher:fetch_one(Stmt),
-            {'varchar(10)', int} =  esqlcipher:column_types(Stmt),
+            [<<"varchar(10)">>, <<"int">>] = esqlcipher:column_types(Stmt),
+            {ok, [<<"hello1">>, 10]} = esqlcipher:fetch_one(Stmt),
+            [<<"varchar(10)">>, <<"int">>] = esqlcipher:column_types(Stmt),
+            {ok, [<<"hello2">>, 20]} = esqlcipher:fetch_one(Stmt),
+            [<<"varchar(10)">>, <<"int">>] = esqlcipher:column_types(Stmt),
             ok = esqlcipher:run(Stmt),
-            {'varchar(10)', int} =  esqlcipher:column_types(Stmt),
+            [<<"varchar(10)">>, <<"int">>] = esqlcipher:column_types(Stmt),
 
             %% Some statements have no column types
             {ok, Stmt2} = esqlcipher:prepare("create table dummy(a, b, c);", Db),
-            {} = esqlcipher:column_types(Stmt2),
+            [] = esqlcipher:column_types(Stmt2),
 
             ok
         end)}
@@ -385,7 +385,7 @@ test_suite() -> [
             ok = esqlcipher:exec("commit;", Db),
 
             {ok, Stmt} = esqlcipher:prepare("select c1 + 1, c1 from t1", Db),
-            {nil, variant} =  esqlcipher:column_types(Stmt),
+            [nil, <<"variant">>] = esqlcipher:column_types(Stmt),
             ok
         end)}
     end,
@@ -393,15 +393,15 @@ test_suite() -> [
     fun({Db, _Filename, _Type}) ->
         {"reset", ?_test(begin
             {ok, Stmt} = esqlcipher:prepare("select * from (values (1), (2));", Db),
-            {ok, {1}} = esqlcipher:fetch_one(Stmt),
+            {ok, [1]} = esqlcipher:fetch_one(Stmt),
 
             ok = esqlcipher:reset(Stmt),
-            {ok, {1}} = esqlcipher:fetch_one(Stmt),
-            {ok, {2}} = esqlcipher:fetch_one(Stmt),
+            {ok, [1]} = esqlcipher:fetch_one(Stmt),
+            {ok, [2]} = esqlcipher:fetch_one(Stmt),
             ok = esqlcipher:run(Stmt),
 
             % After a done the statement is automatically reset.
-            {ok, {1}} = esqlcipher:fetch_one(Stmt),
+            {ok, [1]} = esqlcipher:fetch_one(Stmt),
 
             % Calling reset multiple times...
             ok = esqlcipher:reset(Stmt),
@@ -410,7 +410,7 @@ test_suite() -> [
             ok = esqlcipher:reset(Stmt),
 
             % The statement should still be reset.
-            {ok, {1}} = esqlcipher:fetch_one(Stmt),
+            {ok, [1]} = esqlcipher:fetch_one(Stmt),
 
             ok
         end)}
@@ -429,10 +429,10 @@ test_suite() -> [
 
             F = fun(Row) ->
                 case Row of
-                    {Key, Value} ->
-                    put(Key, Value);
+                    [Key, Value] ->
+                    	put(Key, Value);
                     _ ->
-                    ok
+                    	ok
                 end
             end,
 
@@ -443,16 +443,16 @@ test_suite() -> [
             12 = get(<<"hello3">>),
             13 = get(<<"hello4">>),
 
-            Assoc = fun({one, two} = Names, {Key, _} = Row) ->
-                put({assoc, Key}, lists:zip(tuple_to_list(Names), tuple_to_list(Row)))
+            Assoc = fun([<<"one">>, <<"two">>] = Names, [Key, _] = Row) ->
+                put({assoc, Key}, lists:zip(Names, Row))
             end,
 
             esqlcipher:foreach(Assoc, "select * from test_table;", Db),
 
-            [{one,<<"hello1">>},{two,10}] = get({assoc, <<"hello1">>}),
-            [{one,<<"hello2">>},{two,11}] = get({assoc, <<"hello2">>}),
-            [{one,<<"hello3">>},{two,12}] = get({assoc, <<"hello3">>}),
-            [{one,<<"hello4">>},{two,13}] = get({assoc, <<"hello4">>}),
+            [{<<"one">>,<<"hello1">>},{<<"two">>,10}] = get({assoc, <<"hello1">>}),
+            [{<<"one">>,<<"hello2">>},{<<"two">>,11}] = get({assoc, <<"hello2">>}),
+            [{<<"one">>,<<"hello3">>},{<<"two">>,12}] = get({assoc, <<"hello3">>}),
+            [{<<"one">>,<<"hello4">>},{<<"two">>,13}] = get({assoc, <<"hello4">>}),
 
             ok
         end)}
@@ -470,18 +470,18 @@ test_suite() -> [
 
             F = fun(Row) -> Row end,
             
-            [{<<"hello1">>,10},{<<"hello2">>,11},{<<"hello3">>,12},{<<"hello4">>,13}]
+            [[<<"hello1">>,10],[<<"hello2">>,11],[<<"hello3">>,12],[<<"hello4">>,13]]
                 = esqlcipher:map(F, "select * from test_table", Db),
 
             %% Test that when the row-names are added..
             Assoc = fun(Names, Row) ->
-                    lists:zip(tuple_to_list(Names), tuple_to_list(Row))
-                end,
+                lists:zip(Names, Row)
+            end,
 
-            [[{one,<<"hello1">>},{two,10}],
-             [{one,<<"hello2">>},{two,11}],
-             [{one,<<"hello3">>},{two,12}],
-             [{one,<<"hello4">>},{two,13}]] = esqlcipher:map(Assoc, "select * from test_table", Db),
+            [[{<<"one">>,<<"hello1">>},{<<"two">>,10}],
+             [{<<"one">>,<<"hello2">>},{<<"two">>,11}],
+             [{<<"one">>,<<"hello3">>},{<<"two">>,12}],
+             [{<<"one">>,<<"hello4">>},{<<"two">>,13}]] = esqlcipher:map(Assoc, "select * from test_table", Db),
 
             ok
         end)}
@@ -508,7 +508,7 @@ test_suite() -> [
             {ok, Stmt} = esqlcipher:prepare("select * from test", Db),
 
             %% The prepated statment works.
-            {ok, {1,2,3}} = esqlcipher:fetch_one(Stmt),
+            {ok, [1,2,3]} = esqlcipher:fetch_one(Stmt),
             ok = esqlcipher:run(Stmt),
 
             ok = esqlcipher:close(Db),
@@ -517,7 +517,7 @@ test_suite() -> [
 
             %% Internally sqlite3_close_v2 is used by the nif. This will destruct the
             %% connection when the last perpared statement is finalized
-            {ok, {1,2,3}} = esqlcipher:fetch_one(Stmt),
+            {ok, [1,2,3]} = esqlcipher:fetch_one(Stmt),
             ok = esqlcipher:run(Stmt),
 
             ok
@@ -527,8 +527,8 @@ test_suite() -> [
     fun({Db, _Filename, _Type}) ->
         {"sqlite_version", ?_test(begin
             {ok, Stmt} = esqlcipher:prepare("select sqlite_version() as sqlite_version;", Db),
-            {sqlite_version} =  esqlcipher:column_names(Stmt),
-            ?assertEqual({ok, {<<"3.33.0">>}}, esqlcipher:fetch_one(Stmt)),
+            [<<"sqlite_version">>] =  esqlcipher:column_names(Stmt),
+            ?assertEqual({ok, [<<"3.33.0">>]}, esqlcipher:fetch_one(Stmt)),
             ok
         end)}
     end,
@@ -536,8 +536,8 @@ test_suite() -> [
     fun({Db, _Filename, _Type}) ->
         {"sqlcipher_version", ?_test(begin
             {ok, Stmt} = esqlcipher:prepare("PRAGMA cipher_version;", Db),
-            {cipher_version} =  esqlcipher:column_names(Stmt),
-            ?assertEqual({ok, {<<"4.4.2 community">>}}, esqlcipher:fetch_one(Stmt)),
+            [<<"cipher_version">>] =  esqlcipher:column_names(Stmt),
+            ?assertEqual({ok, [<<"4.4.2 community">>]}, esqlcipher:fetch_one(Stmt)),
             ok
         end)}
     end,
@@ -545,8 +545,8 @@ test_suite() -> [
     fun({Db, _Filename, _Type}) ->
         {"sqlite_source_id", ?_test(begin
             {ok, Stmt} = esqlcipher:prepare("select sqlite_source_id() as sqlite_source_id;", Db),
-            {sqlite_source_id} =  esqlcipher:column_names(Stmt),
-            ?assertEqual({ok, {<<"2020-08-14 13:23:32 fca8dc8b578f215a969cd899336378966156154710873e68b3d9ac5881b0alt1">>}}, esqlcipher:fetch_one(Stmt)),
+            [<<"sqlite_source_id">>] =  esqlcipher:column_names(Stmt),
+            ?assertEqual({ok, [<<"2020-08-14 13:23:32 fca8dc8b578f215a969cd899336378966156154710873e68b3d9ac5881b0alt1">>]}, esqlcipher:fetch_one(Stmt)),
             ok
         end)}
     end

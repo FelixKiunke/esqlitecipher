@@ -83,7 +83,20 @@ typedef struct {
     ERL_NIF_TERM stmt;
 } esqlcipher_command;
 
+static ERL_NIF_TERM atom_ok;
+static ERL_NIF_TERM atom_true;
+static ERL_NIF_TERM atom_false;
+static ERL_NIF_TERM atom_nil;
+static ERL_NIF_TERM atom_blob;
+static ERL_NIF_TERM atom_error;
+static ERL_NIF_TERM atom_interror;
+static ERL_NIF_TERM atom_badarg;
+static ERL_NIF_TERM atom_oom;
+static ERL_NIF_TERM atom_rows;
+static ERL_NIF_TERM atom_busy;
+static ERL_NIF_TERM atom_done;
 static ERL_NIF_TERM atom_esqlcipher;
+static ERL_NIF_TERM atom_esqlcipher_raise;
 
 static ERL_NIF_TERM push_command(ErlNifEnv *env, esqlcipher_connection *conn, esqlcipher_command *cmd);
 
@@ -101,13 +114,13 @@ make_atom(ErlNifEnv *env, const char *atom_name)
 static ERL_NIF_TERM
 make_ok_tuple(ErlNifEnv *env, ERL_NIF_TERM value)
 {
-    return enif_make_tuple2(env, make_atom(env, "ok"), value);
+    return enif_make_tuple2(env, atom_ok, value);
 }
 
 static ERL_NIF_TERM
 make_error_tuple(ErlNifEnv *env, const char *type, const char *reason)
 {
-    return enif_make_tuple2(env, make_atom(env, "error"),
+    return enif_make_tuple2(env, atom_error,
         enif_make_tuple2(env, make_atom(env, type),
             enif_make_string(env, reason, ERL_NIF_LATIN1)));
 }
@@ -176,7 +189,7 @@ make_sqlite3_error_tuple(ErlNifEnv *env, int error_code, sqlite3 *db)
     const char *error_code_msg = get_sqlite3_return_code_msg(error_code);
     const char *msg = get_sqlite3_error_msg(error_code, db);
 
-    return enif_make_tuple2(env, make_atom(env, "error"),
+    return enif_make_tuple2(env, atom_error,
         enif_make_tuple2(env, make_atom(env, error_code_msg),
             enif_make_string(env, msg, ERL_NIF_LATIN1)));
 }
@@ -262,11 +275,11 @@ do_open(ErlNifEnv *env, esqlcipher_connection *db, const ERL_NIF_TERM arg)
     ERL_NIF_TERM error;
 
     if (!enif_inspect_iolist_as_binary(env, enif_make_list2(env, arg, eos), &bin)) {
-        return make_error_tuple(env, "badarg", "filename is not a valid iolist or binary");
+        return atom_badarg;
     }
 
     if (bin.size <= 0 || bin.size > MAX_PATHNAME) {
-        return make_error_tuple(env, "badarg", "filename empty or too long");
+        return atom_badarg;
     }
 
     /* Open the database.
@@ -282,7 +295,7 @@ do_open(ErlNifEnv *env, esqlcipher_connection *db, const ERL_NIF_TERM arg)
 
     sqlite3_busy_timeout(db->db, 2000);
 
-    return make_atom(env, "ok");
+    return atom_ok;
 }
 
 static ERL_NIF_TERM
@@ -291,11 +304,11 @@ do_key(ErlNifEnv *env, esqlcipher_connection *conn, const ERL_NIF_TERM arg)
     ErlNifBinary bin;
 
     if (!enif_inspect_iolist_as_binary(env, arg, &bin)) {
-        return make_error_tuple(env, "badarg", "key is not a valid iolist or binary");
+        return atom_badarg;
     }
 
     if (bin.size > INT_MAX || bin.size < 1)
-        return make_error_tuple(env, "badarg", "invalid key");
+        return atom_badarg;
 
     int rc;
 
@@ -304,7 +317,7 @@ do_key(ErlNifEnv *env, esqlcipher_connection *conn, const ERL_NIF_TERM arg)
         return make_sqlite3_error_tuple(env, rc, conn->db);
     }
 
-    return make_atom(env, "ok");
+    return atom_ok;
 }
 
 static ERL_NIF_TERM
@@ -313,11 +326,11 @@ do_rekey(ErlNifEnv *env, esqlcipher_connection *conn, const ERL_NIF_TERM arg)
     ErlNifBinary bin;
 
     if (!enif_inspect_iolist_as_binary(env, arg, &bin)) {
-        return make_error_tuple(env, "badarg", "key is not a valid iolist or binary");
+        return atom_badarg;
     }
 
     if (bin.size > INT_MAX || bin.size < 1)
-        return make_error_tuple(env, "badarg", "invalid key");
+        return atom_badarg;
 
     int rc;
 
@@ -325,7 +338,7 @@ do_rekey(ErlNifEnv *env, esqlcipher_connection *conn, const ERL_NIF_TERM arg)
     if (rc != SQLITE_OK)
         return make_sqlite3_error_tuple(env, rc, conn->db);
 
-    return make_atom(env, "ok");
+    return atom_ok;
 }
 
 void
@@ -367,13 +380,13 @@ static ERL_NIF_TERM
 do_set_update_hook(ErlNifEnv *env, esqlcipher_connection *db, const ERL_NIF_TERM arg)
 {
     if (!enif_get_local_pid(env, arg, &db->notification_pid))
-	    return make_error_tuple(env, "badarg", "invalid pid");
+	    return atom_badarg;
 
     sqlite3_update_hook(db->db, NULL, NULL);
     if (sqlite3_update_hook(db->db, update_callback, db) != SQLITE_OK)
-        return make_error_tuple(env, "call_fail", "sqlite3_update_hook failed");
+        return atom_error;
 
-    return make_atom(env, "ok");
+    return atom_ok;
 }
 
 /*
@@ -387,14 +400,14 @@ do_exec(ErlNifEnv *env, esqlcipher_connection *conn, const ERL_NIF_TERM arg)
     ERL_NIF_TERM eos = enif_make_int(env, 0);
 
     if (!enif_inspect_iolist_as_binary(env, enif_make_list2(env, arg, eos), &bin)) {
-        return make_error_tuple(env, "badarg", "exec statement is not a valid iolist or binary");
+        return atom_badarg;
     }
 
     rc = sqlite3_exec(conn->db, (char *) bin.data, NULL, NULL, NULL);
     if (rc != SQLITE_OK)
 	    return make_sqlite3_error_tuple(env, rc, conn->db);
 
-    return make_atom(env, "ok");
+    return atom_ok;
 }
 
 /*
@@ -406,7 +419,7 @@ do_changes(ErlNifEnv *env, esqlcipher_connection *conn, const ERL_NIF_TERM arg)
     sqlite3_int64 changes = sqlite3_changes(conn->db);
 
     ERL_NIF_TERM changes_term = enif_make_int64(env, changes);
-    return make_ok_tuple(env, changes_term);
+    return changes_term;
 }
 
 /*
@@ -420,7 +433,7 @@ do_insert(ErlNifEnv *env, esqlcipher_connection *conn, const ERL_NIF_TERM arg)
     ERL_NIF_TERM eos = enif_make_int(env, 0);
 
     if (!enif_inspect_iolist_as_binary(env, enif_make_list2(env, arg, eos), &bin)) {
-        return make_error_tuple(env, "badarg", "insert statement is not a valid iolist or binary");
+        return atom_badarg;
     }
 
     rc = sqlite3_exec(conn->db, (char *) bin.data, NULL, NULL, NULL);
@@ -444,11 +457,11 @@ do_prepare(ErlNifEnv *env, esqlcipher_connection *conn, const ERL_NIF_TERM arg)
     ERL_NIF_TERM eos = enif_make_int(env, 0);
 
     if (!enif_inspect_iolist_as_binary(env, enif_make_list2(env, arg, eos), &bin))
-	    return make_error_tuple(env, "badarg", "not an iolist");
+	    return atom_badarg;
 
     stmt = enif_alloc_resource(esqlcipher_statement_type, sizeof(esqlcipher_statement));
     if (!stmt)
-	    return make_error_tuple(env, "oom", "malloc failed");
+	    return atom_oom;
 
     rc = sqlite3_prepare_v2(conn->db, (char *) bin.data, bin.size, &(stmt->statement), &tail);
     if (rc != SQLITE_OK) {
@@ -556,7 +569,7 @@ do_bind(ErlNifEnv *env, sqlite3 *db, sqlite3_stmt *stmt, const ERL_NIF_TERM arg)
     ERL_NIF_TERM list, head, tail;
 
     if (!enif_is_list(env, arg)) {
-	    return make_error_tuple(env, "badarg", "bad arg list");
+	    return atom_badarg;
     }
 
     list = arg;
@@ -567,7 +580,7 @@ do_bind(ErlNifEnv *env, sqlite3 *db, sqlite3_stmt *stmt, const ERL_NIF_TERM arg)
             return make_error_tuple(env, "badarg", "invalid parameter name");
         }
         if (rc < 0) {
-            return make_error_tuple(env, "badarg", "invalid sql argument type");
+            return make_error_tuple(env, "badarg", "invalid parameter type");
         }
         if (rc != SQLITE_OK) {
             return make_sqlite3_error_tuple(env, rc, db);
@@ -575,58 +588,52 @@ do_bind(ErlNifEnv *env, sqlite3 *db, sqlite3_stmt *stmt, const ERL_NIF_TERM arg)
         list = tail;
     }
 
-    return make_atom(env, "ok");
+    return atom_ok;
 }
 
 static ERL_NIF_TERM
 do_get_autocommit(ErlNifEnv *env, esqlcipher_connection *conn)
 {
     if (sqlite3_get_autocommit(conn->db) != 0) {
-        return make_atom(env, "true");
+        return atom_true;
     } else {
-        return make_atom(env, "false");
+        return atom_false;
     }
-}
-
-static ERL_NIF_TERM
-make_binary(ErlNifEnv *env, const void *bytes, unsigned int size)
-{
-    ErlNifBinary blob;
-    ERL_NIF_TERM term;
-
-    if (!enif_alloc_binary(size, &blob)) {
-	    /* TODO: fix this */
-	    return make_atom(env, "error");
-    }
-
-    memcpy(blob.data, bytes, size);
-    term = enif_make_binary(env, &blob);
-    enif_release_binary(&blob);
-
-    return term;
 }
 
 static ERL_NIF_TERM
 make_cell(ErlNifEnv *env, sqlite3_stmt *statement, unsigned int i)
 {
     int type = sqlite3_column_type(statement, i);
+    ERL_NIF_TERM bin;
+    const void *blob;
+    unsigned char *bindata;
+    size_t bytes;
 
     switch(type) {
     case SQLITE_INTEGER:
-	    return enif_make_int64(env, sqlite3_column_int64(statement, i));
+        return enif_make_int64(env, sqlite3_column_int64(statement, i));
     case SQLITE_FLOAT:
-	    return enif_make_double(env, sqlite3_column_double(statement, i));
-    case SQLITE_BLOB:
-        return enif_make_tuple2(env, make_atom(env, "$blob"),
-            make_binary(env, sqlite3_column_blob(statement, i),
-                sqlite3_column_bytes(statement, i)));
+        return enif_make_double(env, sqlite3_column_double(statement, i));
     case SQLITE_NULL:
-	    return make_atom(env, "nil");
+        return atom_nil;
+    case SQLITE_BLOB:
     case SQLITE_TEXT:
-	    return make_binary(env, sqlite3_column_text(statement, i),
-            sqlite3_column_bytes(statement, i));
+        blob = sqlite3_column_blob(statement, i);
+        if (blob == NULL) {
+            return atom_oom;
+        }
+        bytes = sqlite3_column_bytes(statement, i);
+        bindata = enif_make_new_binary(env, bytes, &bin);
+        memcpy(bindata, blob, bytes);
+
+        if (type == SQLITE_BLOB) {
+            return enif_make_tuple2(env, atom_blob, bin);
+        } else {
+            return bin;
+        }
     default:
-	    return make_atom(env, "should_not_happen");
+        return atom_interror;
     }
 }
 
@@ -634,14 +641,17 @@ static ERL_NIF_TERM
 make_row(ErlNifEnv *env, sqlite3_stmt *statement, ERL_NIF_TERM *array, int size)
 {
     if (!array) {
-        return make_error_tuple(env, "oom", "malloc failed");
+        return atom_oom;
     }
 
     for (int i = 0; i < size; i++) {
         array[i] = make_cell(env, statement, i);
+        if (array[i] == atom_oom || array[i] == atom_interror) {
+            return array[i];
+        }
     }
 
-    return enif_make_tuple_from_array(env, array, size);
+    return enif_make_list_from_array(env, array, size);
 }
 
 static ERL_NIF_TERM
@@ -665,16 +675,20 @@ do_multi_step(ErlNifEnv *env, sqlite3 *db, sqlite3_stmt *stmt, const ERL_NIF_TER
 
         rows = enif_make_list_cell(env, make_row(env, stmt, rowBuffer, rowBufferSize), rows);
 
+        if (rows == atom_oom || rows == atom_interror) {
+            return rows;
+        }
+
         if (chunk_size > 0)
             rc = sqlite3_step(stmt);
     }
 
     switch(rc) {
     case SQLITE_ROW:
-        status = make_atom(env, "rows");
+        status = atom_rows;
         break;
     case SQLITE_BUSY:
-        status = make_atom(env, "$busy");
+        status = atom_busy;
         break;
     case SQLITE_DONE:
         /*
@@ -684,7 +698,7 @@ do_multi_step(ErlNifEnv *env, sqlite3 *db, sqlite3_stmt *stmt, const ERL_NIF_TER
         * Not resetting the statement can lead to vm crashes.
         */
         sqlite3_reset(stmt);
-        status = make_atom(env, "$done");
+        status = atom_done;
         break;
     default:
         /* We use prepare_v2, so any error code can be returned. */
@@ -707,10 +721,10 @@ do_reset(ErlNifEnv *env, sqlite3 *db, sqlite3_stmt *stmt, const ERL_NIF_TERM arg
         } else if (0 == strcmp("true", the_atom)) {
             clear_values = 1;
         } else {
-            make_error_tuple(env, "badarg", "clear_values must be a boolean");
+            return atom_badarg;
         }
     } else {
-        make_error_tuple(env, "badarg", "clear_values must be a boolean atom");
+        return atom_badarg;
     }
 
     int rc = sqlite3_reset(stmt);
@@ -720,7 +734,7 @@ do_reset(ErlNifEnv *env, sqlite3 *db, sqlite3_stmt *stmt, const ERL_NIF_TERM arg
     }
 
     if (rc == SQLITE_OK) {
-        return make_atom(env, "ok");
+        return atom_ok;
     }
 
     return make_sqlite3_error_tuple(env, rc, db);
@@ -729,34 +743,37 @@ do_reset(ErlNifEnv *env, sqlite3 *db, sqlite3_stmt *stmt, const ERL_NIF_TERM arg
 static ERL_NIF_TERM
 do_column_names(ErlNifEnv *env, sqlite3_stmt *stmt)
 {
-    int i, size;
+    int i, size, len;
     const char *name;
+    unsigned char *binname;
     ERL_NIF_TERM *array;
     ERL_NIF_TERM column_names;
 
     size = sqlite3_column_count(stmt);
     if (size == 0) {
-        return make_ok_tuple(env, enif_make_tuple(env, 0));
+        return make_ok_tuple(env, enif_make_list(env, 0));
     } else if (size < 0) {
-        return make_error_tuple(env, "call_fail", "invalid sqlite3_column_count");
+        return atom_oom;
     }
 
     array = (ERL_NIF_TERM *) enif_alloc(sizeof(ERL_NIF_TERM) * size);
     if (!array) {
-        return make_error_tuple(env, "oom", "malloc failed");
+        return atom_oom;
     }
 
     for (i = 0; i < size; i++) {
         name = sqlite3_column_name(stmt, i);
         if (name == NULL) {
             enif_free(array);
-            return make_error_tuple(env, "oom", "sqlite3 malloc failed");
+            return atom_oom;
         }
 
-        array[i] = make_atom(env, name);
+        len = strlen(name);
+        binname = enif_make_new_binary(env, len, &array[i]);
+        memcpy(binname, name, len);
     }
 
-    column_names = enif_make_tuple_from_array(env, array, size);
+    column_names = enif_make_list_from_array(env, array, size);
     enif_free(array);
     return make_ok_tuple(env, column_names);
 }
@@ -764,32 +781,35 @@ do_column_names(ErlNifEnv *env, sqlite3_stmt *stmt)
 static ERL_NIF_TERM
 do_column_types(ErlNifEnv *env, sqlite3_stmt *stmt)
 {
-    int i, size;
+    int i, size, len;
     const char *type;
+    unsigned char *bintype;
     ERL_NIF_TERM *array;
     ERL_NIF_TERM column_types;
 
     size = sqlite3_column_count(stmt);
     if (size == 0) {
-        return make_ok_tuple(env, enif_make_tuple(env, 0));
+        return make_ok_tuple(env, enif_make_list(env, 0));
     } else if (size < 0) {
-        return make_error_tuple(env, "call_fail", "invalid sqlite3_column_count");
+        return atom_oom;
     }
 
     array = (ERL_NIF_TERM *) enif_alloc(sizeof(ERL_NIF_TERM) * size);
     if (!array)
-        return make_error_tuple(env, "oom", "malloc failed");
+        return atom_oom;
 
     for (i = 0; i < size; i++) {
         type = sqlite3_column_decltype(stmt, i);
         if (type == NULL) {
-	       type = "nil";
+	       array[i] = atom_nil;
+        } else {
+            len = strlen(type);
+            bintype = enif_make_new_binary(env, len, &array[i]);
+            memcpy(bintype, type, len);
         }
-
-        array[i] = make_atom(env, type);
     }
 
-    column_types = enif_make_tuple_from_array(env, array, size);
+    column_types = enif_make_list_from_array(env, array, size);
     enif_free(array);
     return make_ok_tuple(env, column_types);
 }
@@ -804,7 +824,7 @@ do_close(ErlNifEnv *env, esqlcipher_connection *conn, const ERL_NIF_TERM arg)
 	    return make_sqlite3_error_tuple(env, rc, conn->db);
 
     conn->db = NULL;
-    return make_atom(env, "ok");
+    return atom_ok;
 }
 
 static ERL_NIF_TERM
@@ -814,7 +834,7 @@ evaluate_command(esqlcipher_command *cmd, esqlcipher_connection *conn)
 
     if (cmd->stmt) {
         if (!enif_get_resource(cmd->env, cmd->stmt, esqlcipher_statement_type, (void **) &stmt)) {
-	       return make_error_tuple(cmd->env, "internal", "invalid statement");
+	       return atom_interror;
         }
     }
 
@@ -850,22 +870,26 @@ evaluate_command(esqlcipher_command *cmd, esqlcipher_connection *conn)
     case cmd_get_autocommit:
         return do_get_autocommit(cmd->env, conn);
     default:
-	    return make_error_tuple(cmd->env, "internal", "invalid_command");
+	    return atom_interror;
     }
 }
 
 static ERL_NIF_TERM
 push_command(ErlNifEnv *env, esqlcipher_connection *conn, esqlcipher_command *cmd) {
     if (!queue_push(conn->commands, cmd))
-        return make_error_tuple(env, "internal", "command_push_failed");
+        return enif_raise_exception(env, atom_interror);
 
-    return make_atom(env, "ok");
+    return atom_ok;
 }
 
 static ERL_NIF_TERM
 make_answer(esqlcipher_command *cmd, ERL_NIF_TERM answer)
 {
-    return enif_make_tuple3(cmd->env, atom_esqlcipher, cmd->ref, answer);
+    if (answer == atom_badarg || answer == atom_oom || answer == atom_error || answer == atom_interror) {
+        return enif_make_tuple3(cmd->env, atom_esqlcipher_raise, cmd->ref, answer);
+    } else {
+        return enif_make_tuple3(cmd->env, atom_esqlcipher, cmd->ref, answer);
+    }
 }
 
 static void *
@@ -904,7 +928,7 @@ esqlcipher_start(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     /* Initialize the resource */
     conn = enif_alloc_resource(esqlcipher_connection_type, sizeof(esqlcipher_connection));
     if (!conn)
-	    return make_error_tuple(env, "oom", "malloc failed");
+	    return enif_raise_exception(env, atom_oom);
 
     conn->db = NULL;
 
@@ -912,14 +936,14 @@ esqlcipher_start(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     conn->commands = queue_create();
     if (!conn->commands) {
 	    enif_release_resource(conn);
-	    return make_error_tuple(env, "internal", "command_queue_create_failed");
+	    return enif_raise_exception(env, atom_interror);
     }
 
     /* Start command processing thread */
     conn->opts = enif_thread_opts_create("esqldb_thread_opts");
     if (enif_thread_create("esqlcipher_connection", &conn->tid, esqlcipher_connection_run, conn, conn->opts) != 0) {
 	    enif_release_resource(conn);
-	    return make_error_tuple(env, "internal", "thread_create_failed");
+	    return enif_raise_exception(env, atom_interror);
     }
 
     db_conn = enif_make_resource(env, conn);
@@ -945,21 +969,21 @@ esqlcipher_open(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	    return enif_make_badarg(env);
     }
     if (!enif_is_ref(env, argv[1])) {
-	    return make_error_tuple(env, "badarg", "invalid ref");
+	    return enif_make_badarg(env);
     }
     if (!enif_get_local_pid(env, argv[2], &pid)) {
-	    return make_error_tuple(env, "badarg", "invalid pid");
+	    return enif_make_badarg(env);
     }
 
     if (!sqlite3_threadsafe()) {
-	    return make_error_tuple(env, "internal",
-            "sqlite3 not thread safe (built with -DSQLITE_THREADSAFE=0)");
+        // sqlite3 was not build thread safe (built with -DSQLITE_THREADSAFE=0)
+	    return enif_raise_exception(env, atom_interror);
     }
 
     /* Note, no check is made for the type of the argument */
     cmd = command_create();
     if (!cmd) {
-	    return make_error_tuple(env, "internal", "command_create_failed");
+	    return enif_raise_exception(env, atom_interror);
     }
 
     cmd->type = cmd_open;
@@ -982,13 +1006,13 @@ set_update_hook(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     if (!enif_get_resource(env, argv[0], esqlcipher_connection_type, (void **) &db))
 	    return enif_make_badarg(env);
     if (!enif_is_ref(env, argv[1]))
-	    return make_error_tuple(env, "badarg", "invalid ref");
+	    return enif_make_badarg(env);
     if (!enif_get_local_pid(env, argv[2], &pid))
-	    return make_error_tuple(env, "badarg", "invalid pid");
+	    return enif_make_badarg(env);
 
     cmd = command_create();
     if (!cmd)
-	    return make_error_tuple(env, "internal", "command_create_failed");
+	    return enif_raise_exception(env, atom_interror);
 
     /* command */
     cmd->type = cmd_update_hook_set;
@@ -1014,14 +1038,14 @@ esqlcipher_key(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     if (!enif_get_resource(env, argv[0], esqlcipher_connection_type, (void **) &db))
         return enif_make_badarg(env);
     if (!enif_is_ref(env, argv[1]))
-        return make_error_tuple(env, "badarg", "invalid ref");
+        return enif_make_badarg(env);
     if (!enif_get_local_pid(env, argv[2], &pid))
-        return make_error_tuple(env, "badarg", "invalid pid");
+        return enif_make_badarg(env);
 
     /* Note, no check is made for the type of the argument */
     cmd = command_create();
     if (!cmd)
-        return make_error_tuple(env, "internal", "command_create_failed");
+        return enif_raise_exception(env, atom_interror);
 
     cmd->type = cmd_key;
     cmd->ref = enif_make_copy(cmd->env, argv[1]);
@@ -1046,14 +1070,14 @@ esqlcipher_rekey(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     if (!enif_get_resource(env, argv[0], esqlcipher_connection_type, (void **) &db))
         return enif_make_badarg(env);
     if (!enif_is_ref(env, argv[1]))
-        return make_error_tuple(env, "badarg", "invalid ref");
+        return enif_make_badarg(env);
     if (!enif_get_local_pid(env, argv[2], &pid))
-        return make_error_tuple(env, "badarg", "invalid pid");
+        return enif_make_badarg(env);
 
     /* Note, no check is made for the type of the argument */
     cmd = command_create();
     if (!cmd)
-        return make_error_tuple(env, "internal", "command_create_failed");
+        return enif_raise_exception(env, atom_interror);
 
     cmd->type = cmd_rekey;
     cmd->ref = enif_make_copy(cmd->env, argv[1]);
@@ -1078,13 +1102,13 @@ esqlcipher_exec(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     if (!enif_get_resource(env, argv[0], esqlcipher_connection_type, (void **) &db))
 	    return enif_make_badarg(env);
     if (!enif_is_ref(env, argv[1]))
-	    return make_error_tuple(env, "badarg", "invalid ref");
+	    return enif_make_badarg(env);
     if (!enif_get_local_pid(env, argv[2], &pid))
-	    return make_error_tuple(env, "badarg", "invalid pid");
+	    return enif_make_badarg(env);
 
     cmd = command_create();
     if (!cmd)
-	    return make_error_tuple(env, "internal", "command_create_failed");
+	    return enif_raise_exception(env, atom_interror);
 
     /* command */
     cmd->type = cmd_exec;
@@ -1110,13 +1134,13 @@ esqlcipher_changes(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     if (!enif_get_resource(env, argv[0], esqlcipher_connection_type, (void **) &db))
 	    return enif_make_badarg(env);
     if (!enif_is_ref(env, argv[1]))
-	    return make_error_tuple(env, "badarg", "invalid ref");
+	    return enif_make_badarg(env);
     if (!enif_get_local_pid(env, argv[2], &pid))
-	    return make_error_tuple(env, "badarg", "invalid pid");
+	    return enif_make_badarg(env);
 
     cmd = command_create();
     if (!cmd)
-	    return make_error_tuple(env, "internal", "command_create_failed");
+	    return enif_raise_exception(env, atom_interror);
 
     /* command */
     cmd->type = cmd_changes;
@@ -1138,13 +1162,13 @@ esqlcipher_insert(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     if (!enif_get_resource(env, argv[0], esqlcipher_connection_type, (void **) &db))
         return enif_make_badarg(env);
     if (!enif_is_ref(env, argv[1]))
-        return make_error_tuple(env, "badarg", "invalid ref");
+        return enif_make_badarg(env);
     if (!enif_get_local_pid(env, argv[2], &pid))
-        return make_error_tuple(env, "badarg", "invalid pid");
+        return enif_make_badarg(env);
 
     cmd = command_create();
     if (!cmd)
-        return make_error_tuple(env, "internal", "command_create_failed");
+        return enif_raise_exception(env, atom_interror);
 
     /* command */
     cmd->type = cmd_insert;
@@ -1167,13 +1191,13 @@ esqlcipher_get_autocommit(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     if (!enif_get_resource(env, argv[0], esqlcipher_connection_type, (void **) &db))
         return enif_make_badarg(env);
     if (!enif_is_ref(env, argv[1]))
-        return make_error_tuple(env, "badarg", "invalid ref");
+        return enif_make_badarg(env);
     if (!enif_get_local_pid(env, argv[2], &pid))
-        return make_error_tuple(env, "badarg", "invalid pid");
+        return enif_make_badarg(env);
 
     cmd = command_create();
     if (!cmd)
-        return make_error_tuple(env, "internal", "command_create_failed");
+        return enif_raise_exception(env, atom_interror);
 
     /* command */
     cmd->type = cmd_get_autocommit;
@@ -1198,13 +1222,13 @@ esqlcipher_prepare(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     if (!enif_get_resource(env, argv[0], esqlcipher_connection_type, (void **) &conn))
 	    return enif_make_badarg(env);
     if (!enif_is_ref(env, argv[1]))
-	    return make_error_tuple(env, "badarg", "invalid ref");
+	    return enif_make_badarg(env);
     if (!enif_get_local_pid(env, argv[2], &pid))
-	    return make_error_tuple(env, "badarg", "invalid pid");
+	    return enif_make_badarg(env);
 
     cmd = command_create();
     if (!cmd)
-	    return make_error_tuple(env, "internal", "command_create_failed");
+	    return enif_raise_exception(env, atom_interror);
 
     cmd->type = cmd_prepare;
     cmd->ref = enif_make_copy(cmd->env, argv[1]);
@@ -1233,13 +1257,13 @@ esqlcipher_bind(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     if (!enif_get_resource(env, argv[1], esqlcipher_statement_type, (void **) &stmt))
 	    return enif_make_badarg(env);
     if (!enif_is_ref(env, argv[2]))
-	    return make_error_tuple(env, "badarg", "invalid ref");
+	    return enif_make_badarg(env);
     if (!enif_get_local_pid(env, argv[3], &pid))
-	    return make_error_tuple(env, "badarg", "invalid pid");
+	    return enif_make_badarg(env);
 
     cmd = command_create();
     if (!cmd)
-	    return make_error_tuple(env, "internal", "command_create_failed");
+	    return enif_raise_exception(env, atom_interror);
 
     cmd->type = cmd_bind;
     cmd->ref = enif_make_copy(cmd->env, argv[2]);
@@ -1272,20 +1296,20 @@ esqlcipher_multi_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
         return enif_make_badarg(env);
 
     if (!enif_get_int(env, argv[2], &chunk_size))
-        return make_error_tuple(env, "badarg", "invalid chunk_size");
+        return enif_make_badarg(env);
 
     if (!enif_is_ref(env, argv[3]))
-        return make_error_tuple(env, "badarg", "invalid ref");
+        return enif_make_badarg(env);
 
     if (!enif_get_local_pid(env, argv[4], &pid))
-        return make_error_tuple(env, "badarg", "invalid pid");
+        return enif_make_badarg(env);
 
     if (!stmt->statement)
-        return make_error_tuple(env, "badarg", "no prepared statement");
+        return enif_make_badarg(env);
 
     cmd = command_create();
     if (!cmd)
-        return make_error_tuple(env, "internal", "command_create_failed");
+        return enif_raise_exception(env, atom_interror);
 
     cmd->type = cmd_multi_step;
     cmd->ref = enif_make_copy(cmd->env, argv[3]);
@@ -1314,15 +1338,15 @@ esqlcipher_reset(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     if (!enif_get_resource(env, argv[1], esqlcipher_statement_type, (void **) &stmt))
 	    return enif_make_badarg(env);
     if (!enif_is_ref(env, argv[2]))
-	    return make_error_tuple(env, "badarg", "invalid ref");
+	    return enif_make_badarg(env);
     if (!enif_get_local_pid(env, argv[3], &pid))
-	    return make_error_tuple(env, "badarg", "invalid pid");
+	    return enif_make_badarg(env);
     if (!stmt->statement)
-	    return make_error_tuple(env, "badarg", "no prepared statement");
+	    return enif_make_badarg(env);
 
     cmd = command_create();
     if (!cmd)
-	   return make_error_tuple(env, "internal", "command_create_failed");
+	   return enif_raise_exception(env, atom_interror);
 
     cmd->type = cmd_reset;
     cmd->ref = enif_make_copy(cmd->env, argv[2]);
@@ -1351,15 +1375,15 @@ esqlcipher_column_names(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     if (!enif_get_resource(env, argv[1], esqlcipher_statement_type, (void **) &stmt))
 	    return enif_make_badarg(env);
     if (!enif_is_ref(env, argv[2]))
-	    return make_error_tuple(env, "badarg", "invalid ref");
+	    return enif_make_badarg(env);
     if (!enif_get_local_pid(env, argv[3], &pid))
-	    return make_error_tuple(env, "badarg", "invalid pid");
+	    return enif_make_badarg(env);
     if (!stmt->statement)
-	    return make_error_tuple(env, "badarg", "no prepared statement");
+	    return enif_make_badarg(env);
 
     cmd = command_create();
     if (!cmd)
-	    return make_error_tuple(env, "internal", "command_create_failed");
+	    return enif_raise_exception(env, atom_interror);
 
     cmd->type = cmd_column_names;
     cmd->ref = enif_make_copy(cmd->env, argv[2]);
@@ -1388,16 +1412,16 @@ esqlcipher_column_types(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     if (!enif_get_resource(env, argv[1], esqlcipher_statement_type, (void **) &stmt))
 	    return enif_make_badarg(env);
     if (!enif_is_ref(env, argv[2]))
-	    return make_error_tuple(env, "badarg", "invalid ref");
+	    return enif_make_badarg(env);
     if (!enif_get_local_pid(env, argv[3], &pid))
-	    return make_error_tuple(env, "badarg", "invalid pid");
+	    return enif_make_badarg(env);
 
     if (!stmt->statement)
-	    return make_error_tuple(env, "badarg", "no prepared statement");
+	    return enif_make_badarg(env);
 
     cmd = command_create();
     if (!cmd)
-	    return make_error_tuple(env, "internal", "command_create_failed");
+	    return enif_raise_exception(env, atom_interror);
 
     cmd->type = cmd_column_types;
     cmd->ref = enif_make_copy(cmd->env, argv[2]);
@@ -1420,13 +1444,13 @@ esqlcipher_close(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     if (!enif_get_resource(env, argv[0], esqlcipher_connection_type, (void **) &conn))
 	    return enif_make_badarg(env);
     if (!enif_is_ref(env, argv[1]))
-	    return make_error_tuple(env, "badarg", "invalid ref");
+	    return enif_make_badarg(env);
     if (!enif_get_local_pid(env, argv[2], &pid))
-	    return make_error_tuple(env, "badarg", "invalid pid");
+	    return enif_make_badarg(env);
 
     cmd = command_create();
     if (!cmd)
-	    return make_error_tuple(env, "internal", "command_create_failed");
+	    return enif_raise_exception(env, atom_interror);
 
     cmd->type = cmd_close;
     cmd->ref = enif_make_copy(cmd->env, argv[1]);
@@ -1455,7 +1479,20 @@ on_load(ErlNifEnv* env, void** priv, ERL_NIF_TERM info)
 	    return -1;
     esqlcipher_statement_type = rt;
 
+    atom_ok         = make_atom(env, "ok");
+    atom_true       = make_atom(env, "true");
+    atom_false      = make_atom(env, "false");
+    atom_nil        = make_atom(env, "nil");
+    atom_blob       = make_atom(env, "$blob");
+    atom_rows       = make_atom(env, "rows");
+    atom_busy       = make_atom(env, "$busy");
+    atom_done       = make_atom(env, "$done");
+    atom_error      = make_atom(env, "error");
+    atom_interror   = make_atom(env, "esqlcipher_internal_error");
+    atom_badarg     = make_atom(env, "badarg");
+    atom_oom        = make_atom(env, "oom");
     atom_esqlcipher = make_atom(env, "esqlcipher");
+    atom_esqlcipher_raise = make_atom(env, "esqlcipher_raise");
 
     return 0;
 }

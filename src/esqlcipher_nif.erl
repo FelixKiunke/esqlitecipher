@@ -49,9 +49,6 @@
 
 -type connection() :: reference().
 -type statement() :: reference().
--type sqlite_error() :: {error, {atom(), string()}}.
-%% Error return type.
-%% Contains an error id atom and a reason/error message.
 
 -type sql() :: iodata().
 %% SQL string type.
@@ -74,7 +71,7 @@ init() ->
 %% @doc Start a low level thread which can handle sqlite3 calls.
 %% @see esqlcipher:open/2
 %% @see esqlcipher:open_encrypted/3
--spec start() -> {ok, reference()} | sqlite_error().
+-spec start() -> {ok, reference()}.
 start() ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -87,7 +84,7 @@ start() ->
 %% `ok | sqlite_error()'
 %% @see esqlcipher:open/2
 %% @see esqlcipher:open_encrypted/3
--spec open(connection(), reference(), pid(), iodata()) -> ok | sqlite_error().
+-spec open(connection(), reference(), pid(), iodata()) -> ok.
 open(_Db, _Ref, _Dest, _Filename) ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -97,7 +94,7 @@ open(_Db, _Ref, _Dest, _Filename) ->
 %%
 %% `ok | sqlite_error()'
 %% @see esqlcipher:close/2
--spec close(connection(), reference(), pid()) -> ok | sqlite_error().
+-spec close(connection(), reference(), pid()) -> ok.
 close(_Db, _Ref, _Dest) ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -109,7 +106,7 @@ close(_Db, _Ref, _Dest) ->
 %%
 %% `ok | sqlite_error()'
 %% @see esqlcipher:open_encrypted/3
--spec key(connection(), reference(), pid(), iodata()) -> ok | sqlite_error().
+-spec key(connection(), reference(), pid(), iodata()) -> ok.
 key(_Db, _Ref, _Dest, _Key) ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -121,7 +118,7 @@ key(_Db, _Ref, _Dest, _Key) ->
 %%
 %% `ok | sqlite_error()'
 %% @see esqlcipher:rekey/3
--spec rekey(connection(), reference(), pid(), iodata()) -> ok | sqlite_error().
+-spec rekey(connection(), reference(), pid(), iodata()) -> ok.
 rekey(_Db, _Ref, _Dest, _Key) ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -131,7 +128,7 @@ rekey(_Db, _Ref, _Dest, _Key) ->
 %%
 %% `ok | sqlite_error()'
 %% @see esqlcipher:exec/3
--spec exec(connection(), reference(), pid(), sql()) -> ok | sqlite_error().
+-spec exec(connection(), reference(), pid(), sql()) -> ok.
 exec(_Db, _Ref, _Dest, _Sql) ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -141,7 +138,7 @@ exec(_Db, _Ref, _Dest, _Sql) ->
 %%
 %% `{ok, integer()} | sqlite_error()'
 %% @see esqlcipher:insert/3
--spec insert(connection(), reference(), pid(), sql()) -> ok | sqlite_error().
+-spec insert(connection(), reference(), pid(), sql()) -> ok.
 insert(_Db, _Ref, _Dest, _Sql) ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -152,7 +149,7 @@ insert(_Db, _Ref, _Dest, _Sql) ->
 %% `{ok} | sqlite_error()'
 %% @see esqlcipher:prepare/3
 %%
--spec prepare(connection(), reference(), pid(), sql()) -> ok | sqlite_error().
+-spec prepare(connection(), reference(), pid(), sql()) -> ok.
 prepare(_Db, _Ref, _Dest, _Sql) ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -162,7 +159,7 @@ prepare(_Db, _Ref, _Dest, _Sql) ->
 %%
 %% `ok | sqlite_error()'
 %% @see esqlcipher:bind/3
--spec bind(connection(), statement(), reference(), pid(), bind_values()) -> ok | sqlite_error().
+-spec bind(connection(), statement(), reference(), pid(), bind_values()) -> ok.
 bind(_Db, _Stmt, _Ref, _Dest, _Args) ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -173,7 +170,7 @@ bind(_Db, _Stmt, _Ref, _Dest, _Args) ->
 %% Returns a message of the format
 %%
 %% ``{rows | '$done' | '$busy', [tuple()]} | sqlite_error()''
--spec multi_step(connection(), statement(), pos_integer(), reference(), pid()) -> ok | sqlite_error().
+-spec multi_step(connection(), statement(), pos_integer(), reference(), pid()) -> ok.
 multi_step(_Db, _Stmt, _Chunk_Size, _Ref, _Dest) ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -183,7 +180,7 @@ multi_step(_Db, _Stmt, _Chunk_Size, _Ref, _Dest) ->
 %%
 %% `ok | sqlite_error()'
 %% @see esqlcipher:reset/3
--spec reset(connection(), statement(), reference(), pid(), boolean()) -> ok | sqlite_error().
+-spec reset(connection(), statement(), reference(), pid(), boolean()) -> ok.
 reset(_Db, _Stmt, _Ref, _Dest, _ClearValues) ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -194,7 +191,7 @@ reset(_Db, _Stmt, _Ref, _Dest, _ClearValues) ->
 %%
 %% `{ok, integer()} | sqlite_error()'
 %% @see esqlcipher:changes/2
--spec changes(connection(), reference(), pid()) -> ok | sqlite_error().
+-spec changes(connection(), reference(), pid()) -> ok.
 changes(_Db, _Ref, _Dest) ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -204,7 +201,7 @@ changes(_Db, _Ref, _Dest) ->
 %%
 %% `{ok, tuple()} | sqlite_error()'
 %% @see esqlcipher:column_names/2
--spec column_names(connection(), statement(), reference(), pid()) -> ok | sqlite_error().
+-spec column_names(connection(), statement(), reference(), pid()) -> ok.
 column_names(_Db, _Stmt, _Ref, _Dest) ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -214,7 +211,7 @@ column_names(_Db, _Stmt, _Ref, _Dest) ->
 %%
 %% `{ok, tuple()} | sqlite_error()'
 %% @see esqlcipher:column_types/2
--spec column_types(connection(), statement(), reference(), pid()) -> ok | sqlite_error().
+-spec column_types(connection(), statement(), reference(), pid()) -> ok.
 column_types(_Db, _Stmt, _Ref, _Dest) ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -224,7 +221,7 @@ column_types(_Db, _Stmt, _Ref, _Dest) ->
 %%
 %% `boolean()'
 %% @see esqlcipher:get_autocommit/2
--spec get_autocommit(connection(), reference(), pid()) -> ok | sqlite_error().
+-spec get_autocommit(connection(), reference(), pid()) -> ok.
 get_autocommit(_Db, _Ref, _Dest) ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -234,6 +231,6 @@ get_autocommit(_Db, _Ref, _Dest) ->
 %%
 %% `ok | sqlite_error()'
 %% @see esqlcipher:set_update_hook/3
--spec set_update_hook(connection(), reference(), pid(), pid()) -> ok | sqlite_error().
+-spec set_update_hook(connection(), reference(), pid(), pid()) -> ok.
 set_update_hook(_Db, _Ref, _Dest, _Pid) ->
     erlang:nif_error(nif_library_not_loaded).
