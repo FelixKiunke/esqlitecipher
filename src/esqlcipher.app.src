@@ -1,7 +1,7 @@
 {application, esqlcipher,
  [
   {description, "sqlcipher nif interface"},
-  {vsn, "1.2.0"},
+  {vsn, "2.0.0-rc.1"},
   {modules, [esqlcipher, esqlcipher_nif]},
   {registered, []},
   {licenses, ["Apache"]},
