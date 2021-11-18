@@ -56,7 +56,7 @@
 -type sql_value() :: number() | nil | iodata() | {'$blob', iodata()}.
 %% SQL value type.
 
--type bind_values() :: [sql_value() | {pos_integer() | atom(), sql_value()}].
+-type bind_value() :: sql_value() | {pos_integer() | atom(), sql_value()}.
 %% List of values for statement parameters (see {@link bind/3}).
 
 %% @doc Load NIF
@@ -159,7 +159,7 @@ prepare(_Db, _Ref, _Dest, _Sql) ->
 %%
 %% `ok | sqlite_error()'
 %% @see esqlcipher:bind/3
--spec bind(connection(), statement(), reference(), pid(), bind_values()) -> ok.
+-spec bind(connection(), statement(), reference(), pid(), [bind_value()]) -> ok.
 bind(_Db, _Stmt, _Ref, _Dest, _Args) ->
     erlang:nif_error(nif_library_not_loaded).
 
@@ -169,7 +169,8 @@ bind(_Db, _Stmt, _Ref, _Dest, _Args) ->
 %%
 %% Returns a message of the format
 %%
-%% ``{rows | '$done' | '$busy', [tuple()]} | sqlite_error()''
+%% ``{rows | '$done' | '$busy', [row()]} | sqlite_error()''
+%% where row() is a list of values
 -spec multi_step(connection(), statement(), pos_integer(), reference(), pid()) -> ok.
 multi_step(_Db, _Stmt, _Chunk_Size, _Ref, _Dest) ->
     erlang:nif_error(nif_library_not_loaded).
@@ -199,7 +200,7 @@ changes(_Db, _Ref, _Dest) ->
 %%
 %% Returns a message of the format
 %%
-%% `{ok, tuple()} | sqlite_error()'
+%% `{ok, [binary()]} | sqlite_error()'
 %% @see esqlcipher:column_names/2
 -spec column_names(connection(), statement(), reference(), pid()) -> ok.
 column_names(_Db, _Stmt, _Ref, _Dest) ->
@@ -209,7 +210,7 @@ column_names(_Db, _Stmt, _Ref, _Dest) ->
 %%
 %% Returns a message of the format
 %%
-%% `{ok, tuple()} | sqlite_error()'
+%% `{ok, [binary()]} | sqlite_error()'
 %% @see esqlcipher:column_types/2
 -spec column_types(connection(), statement(), reference(), pid()) -> ok.
 column_types(_Db, _Stmt, _Ref, _Dest) ->

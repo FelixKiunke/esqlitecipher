@@ -123,6 +123,12 @@
 %% Database connection type.
 %% Returned by {@link open/2} and {@link open_encrypted/3}.
 
+-type connection_plain() :: {connection, reference(), plaintext}.
+%% Unencrypted database connection type.
+
+-type connection_enc() :: {connection, reference(), encrypted}.
+%% Encrypted database connection type.
+
 -type statement() :: {statement, reference(), connection()}.
 %% Prepared statement type.
 %% Returned by {@link prepare/3} or {@link prepare_bind/4}.
@@ -137,22 +143,22 @@
 -type sql_value() :: number() | nil | iodata() | {'$blob', iodata()}.
 %% SQL value type.
 
--type bind_values() :: [sql_value() | {pos_integer() | atom(), sql_value()}].
+-type bind_value() :: sql_value() | {pos_integer() | atom(), sql_value()}.
 %% List of values for statement parameters (see {@link bind/3}).
 
 -type row() :: [sql_value()].
 %% SQL row type.
 
--type map_function(ReturnType) :: fun((Row :: row()) -> ReturnType) | fun((ColNames :: [atom()], Row :: row()) -> ReturnType).
+-type map_function(ReturnType) :: fun((Row :: row()) -> ReturnType) | fun((ColNames :: [binary()], Row :: row()) -> ReturnType).
 %% Type of functions used in {@link map/5}.
 
--type foreach_function() :: fun((Row :: row()) -> any()) | fun((ColNames :: [atom()], Row :: row()) -> any()).
+-type foreach_function() :: fun((Row :: row()) -> any()) | fun((ColNames :: [binary()], Row :: row()) -> any()).
 %% Type of functions used in {@link foreach/5}.
 
 
 
 %% @equiv open(Filename, 5000)
--spec open(iodata()) ->  {ok, connection()} | sqlite_error().
+-spec open(iodata()) ->  {ok, connection_plain()} | sqlite_error().
 open(Filename) ->
     open(Filename, ?DEFAULT_TIMEOUT).
 
@@ -168,7 +174,7 @@ open(Filename) ->
 %%
 %% Since sqlcipher is just sqlite3 under the hood, these unencrypted databases
 %% are fully compatible with sqlite3.
--spec open(iodata(), timeout()) -> {ok, connection()} | sqlite_error().
+-spec open(iodata(), timeout()) -> {ok, connection_plain()} | sqlite_error().
 open(Filename, Timeout) ->
     {ok, Connection} = esqlcipher_nif:start(),
 
@@ -190,7 +196,7 @@ open(Filename, Timeout) ->
 
 
 %% @equiv open_encrypted(Filename, Key, 5000)
--spec open_encrypted(iodata(), iodata()) -> {ok, connection()} | sqlite_error().
+-spec open_encrypted(iodata(), iodata()) -> {ok, connection_enc()} | sqlite_error().
 open_encrypted(Filename, Key) ->
     open_encrypted(Filename, Key, ?DEFAULT_TIMEOUT).
 
@@ -214,7 +220,7 @@ open_encrypted(Filename, Key) ->
 %% <a href="https://www.zetetic.net/sqlcipher/sqlcipher-api/#key">sqlcipher
 %% documentation</a> for further information about the generation and usage of
 %% encryption keys.
--spec open_encrypted(iodata(), iodata(), timeout()) -> {ok, connection()} | sqlite_error().
+-spec open_encrypted(iodata(), iodata(), timeout()) -> {ok, connection_enc()} | sqlite_error().
 open_encrypted(Filename, Key, Timeout) ->
     {ok, Connection} = esqlcipher_nif:start(),
 
@@ -322,7 +328,7 @@ exec(Sql, Connection) ->
 %% The second form of invocation (with `Params') is equivalent to
 %% {@link exec/4. `exec(Sql, Params, Connection, 5000)'}.
 -spec exec(sql(), Connection :: connection(), timeout()) -> ok | sqlite_error()
-        ; (sql(), [_], connection()) -> ok | sqlite_error().
+        ; (sql(), [bind_value()], connection()) -> ok | sqlite_error().
 exec(Sql, {connection, Connection, _}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:exec(Connection, Ref, self(), Sql),
@@ -332,7 +338,7 @@ exec(Sql, Params, {connection, _, _}=Connection) when is_list(Params) ->
 
 %% @doc Execute prepared SQL statement without returning anything.
 %% @param Params values that are bound to the SQL statement
--spec exec(sql(), list(term()), connection(), timeout()) -> ok | sqlite_error().
+-spec exec(sql(), [bind_value()], connection(), timeout()) -> ok | sqlite_error().
 exec(Sql, Params, {connection, _, _}=Connection, Timeout) when is_list(Params) ->
     {ok, Statement} = prepare_bind(Sql, Params, Connection, Timeout),
     run(Statement, Timeout).
@@ -374,7 +380,7 @@ prepare(Sql, {connection, Connection, _}=C, Timeout) ->
 
 
 %% @equiv bind(Statement, Args, 5000)
--spec bind(statement(), [bind_values()]) -> ok | sqlite_error().
+-spec bind(statement(), [bind_value()]) -> ok | sqlite_error().
 bind(Statement, Values) ->
     bind(Statement, Values, ?DEFAULT_TIMEOUT).
 
@@ -413,7 +419,7 @@ bind(Statement, Values) ->
 %% either be a list of raw values or a list of tuples of the form `{N, Value}' or
 %% `{name, Value}'. Of course, something like ``{myblob, {'$blob', <<"blob">>}}''
 %% is allowed as well.
--spec bind(Statement :: statement(), [bind_values()], timeout()) -> ok | sqlite_error().
+-spec bind(Statement :: statement(), [bind_value()], timeout()) -> ok | sqlite_error().
 bind({statement, Stmt, {connection, Conn, _}}, Values, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:bind(Conn, Stmt, Ref, self(), bind_values(Values, 1)),
@@ -423,7 +429,7 @@ bind({statement, Stmt, {connection, Conn, _}}, Values, Timeout) ->
 %% either a name or a parameter index in the scheme
 %% <a href="https://www.sqlite.org/lang_expr.html#varparam">used by sqlite3</a>.
 %% @private
--spec bind_values(bind_values(), pos_integer()) -> [{atom() | pos_integer(), sql_value()}].
+-spec bind_values([bind_value()], pos_integer()) -> [{atom() | pos_integer(), sql_value()}].
 bind_values([], _) -> [];
 bind_values([{N, Value} | Values], I) when is_integer(N) ->
     true = N > 0,
@@ -436,13 +442,13 @@ bind_values([Value | Values], I) ->
 
 
 %% @equiv prepare_bind(Sql, Values, Connection, 5000)
--spec prepare_bind(sql(), [bind_values()], connection()) -> {ok, statement()} | sqlite_error().
+-spec prepare_bind(sql(), [bind_value()], connection()) -> {ok, statement()} | sqlite_error().
 prepare_bind(Sql, Values, Connection) ->
     prepare_bind(Sql, Values, Connection, ?DEFAULT_TIMEOUT).
 
 %% @doc Prepare an SQL statement and bind values to it.
 %% This is simply {@link prepare/3} and {@link bind/3} in a single step.
--spec prepare_bind(sql(), [bind_values()], connection(), timeout()) -> {ok, statement()} | sqlite_error().
+-spec prepare_bind(sql(), [bind_value()], connection(), timeout()) -> {ok, statement()} | sqlite_error().
 prepare_bind(Sql, [], {connection, _, _}=Connection, Timeout) ->
     prepare(Sql, Connection, Timeout);
 prepare_bind(Sql, Values, {connection, _, _}=Connection, Timeout) ->
@@ -466,7 +472,7 @@ reset(Statement) ->
 -spec reset(statement(), boolean() | timeout()) -> ok | sqlite_error().
 reset(Statement, ClearValues) when is_boolean(ClearValues) ->
     reset(Statement, ClearValues, ?DEFAULT_TIMEOUT);
-reset(Statement, Timeout) when is_integer(Timeout) ->
+reset(Statement, Timeout) when is_integer(Timeout); Timeout == infinity ->
     reset(Statement, false, Timeout).
 
 %% @doc Reset the prepared statement back to its initial state.
@@ -485,10 +491,10 @@ reset({statement, Stmt, {connection, Conn, _}}, ClearValues, Timeout) ->
 %% Returns rows in reverse order
 %% @private
 -spec multi_step(statement(), pos_integer(), timeout()) ->
-                {rows, list(tuple())} |
-                {'$busy', list(tuple())} |
-                {'$done', list(tuple())} |
-                {error, term()}.
+                {rows, [row()]} |
+                {'$busy', [row()]} |
+                {'$done', [row()]} |
+                sqlite_error().
 multi_step({statement, Stmt, {connection, Conn, _}}, ChunkSize, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:multi_step(Conn, Stmt, ChunkSize, Ref, self()),
@@ -498,8 +504,8 @@ multi_step({statement, Stmt, {connection, Conn, _}}, ChunkSize, Timeout) ->
 %% @doc retry `multi_step' a number of times if the database is busy.
 %% Returns rows in reverse order
 %% @private
--spec try_multi_step(statement(), pos_integer(), [tuple()], non_neg_integer(), timeout()) ->
-    {rows, [tuple()]} | {'$done', [tuple()]} | sqlite_error().
+-spec try_multi_step(statement(), pos_integer(), [row()], non_neg_integer(), timeout()) ->
+    {rows, [row()]} | {'$done', [row()]} | sqlite_error().
 try_multi_step(_Statement, _ChunkSize, _Rest, Tries, _Timeout) when Tries > ?MAX_TRIES ->
     {error, {busy, "database is busy"}};
 try_multi_step(Statement, ChunkSize, Rest, Tries, Timeout) ->
@@ -508,7 +514,7 @@ try_multi_step(Statement, ChunkSize, Rest, Tries, Timeout) ->
             % NB: It's possible that the database becomes busy only after a number
             % of rows have already been fetched.
             % Exponential backoff:
-            timer:sleep(50 + math:pow(2, Tries) * 10),
+            timer:sleep(50 + trunc(math:pow(2, Tries)) * 10),
             try_multi_step(Statement, ChunkSize, Rows ++ Rest, Tries + 1, Timeout);
         {rows, Rows} ->
             {rows, Rows ++ Rest};
@@ -543,7 +549,7 @@ fetch_one(Statement) ->
 %% @doc fetch exactly one row of results. Returns `ok' if the result is empty.
 %% @param Statement a prepared sql statement created by {@link prepare/3} or {@link prepare_bind/4}
 %% @returns `{ok, X}' if the statement was executed successfully where `X' is
-%%   either a row in the shape of a tuple or `nil' if no rows where returned
+%%   either a row in the shape of a list or `nil' if no rows where returned
 -spec fetch_one(statement(), timeout()) -> {ok, nil} | {ok, row()} | sqlite_error().
 fetch_one(Statement, Timeout) ->
     case fetch_chunk(Statement, 1, Timeout) of
@@ -575,16 +581,12 @@ run(Statement, Timeout) ->
 
 
 %% @equiv fetch_all(Statement, 5000, 5000)
--spec fetch_all(statement()) ->
-                      list(tuple()) |
-                      {error, term()}.
+-spec fetch_all(statement()) -> [row()] | sqlite_error().
 fetch_all(Statement) ->
     fetch_all(Statement, ?DEFAULT_CHUNK_SIZE, ?DEFAULT_TIMEOUT).
 
 %% @equiv fetch_all(Statement, ChunkSize, 5000)
--spec fetch_all(statement(), pos_integer()) ->
-                      list(tuple()) |
-                      {error, term()}.
+-spec fetch_all(statement(), pos_integer()) -> [row()] | sqlite_error().
 fetch_all(Statement, ChunkSize) ->
     fetch_all(Statement, ChunkSize, ?DEFAULT_TIMEOUT).
 
@@ -672,20 +674,20 @@ get_autocommit({connection, Connection, _}, Timeout) ->
 
 %% @equiv q(Sql, [], Connection, 5000)
 %% @throws sqlite_error()
--spec q(sql(), connection()) -> [tuple()].
+-spec q(sql(), connection()) -> [row()].
 q(Sql, Connection) ->
     q(Sql, [], Connection, ?DEFAULT_TIMEOUT).
 
 %% @equiv q(Sql, Args, Connection, 5000)
 %% @throws sqlite_error()
--spec q(sql(), [bind_values()], connection()) -> [tuple()].
+-spec q(sql(), [bind_value()], connection()) -> [row()].
 q(Sql, Args, Connection) ->
     q(Sql, Args, Connection, ?DEFAULT_TIMEOUT).
 
-%% @doc Prepare statement, bind args and return a list with tuples as result.
+%% @doc Prepare statement, bind args and return a list of rows as result.
 %% Errors are thrown, not returned.
 %% @throws sqlite_error()
--spec q(sql(), [bind_values()], connection(), timeout()) -> [tuple()].
+-spec q(sql(), [bind_value()], connection(), timeout()) -> [row()].
 q(Sql, Args, Connection, Timeout) ->
     case prepare_bind(Sql, Args, Connection, Timeout) of
         {ok, Statement} ->
@@ -708,17 +710,17 @@ map(F, Sql, {connection, _, _} = Connection) ->
 
 %% @equiv map(F, Sql, [], Connection, 5000)
 %% @throws sqlite_error()
--spec map(map_function(Type), sql(), [bind_values()], connection()) -> [Type].
+-spec map(map_function(Type), sql(), [bind_value()], connection()) -> [Type].
 map(F, Sql, Args, Connection) ->
     map(F, Sql, Args, Connection, ?DEFAULT_TIMEOUT).
 
 %% @doc Map over all rows returned by the SQL query `Sql'.
-%% @param A function that takes either one parameter (a row tuple) or two
-%%   (a column name tuple and a row tuple) and returns any kind of value
+%% @param A function that takes either one parameter (a row) or two
+%%   (a column name list and a row) and returns any kind of value
 %% @param Sql an SQL query
 %% @param Args values that are bound to `Sql'
 %% @throws sqlite_error()
--spec map(map_function(Type), sql(), [bind_values()], connection(), timeout()) -> [Type].
+-spec map(map_function(Type), sql(), [bind_value()], connection(), timeout()) -> [Type].
 map(F, Sql, Args, Connection, Timeout) ->
     case prepare_bind(Sql, Args, Connection, Timeout) of
         {ok, Statement} ->
@@ -731,7 +733,7 @@ map(F, Sql, Args, Connection, Timeout) ->
 
 %% @doc Map function over statement results
 %% @private
--spec map_s(map_function(Type), statement(), tuple(), timeout()) -> [Type].
+-spec map_s(map_function(Type), statement(), [binary()], timeout()) -> [Type].
 map_s(F, Statement, ColNames, Timeout) when is_function(F, 1) ->
     case fetch_one(Statement, Timeout) of
         {ok, nil} -> [];
@@ -755,18 +757,18 @@ foreach(F, Sql, {connection, _, _} = Connection) ->
 
 %% @equiv foreach(F, Sql, Args, Connection, 5000)
 %% @throws sqlite_error()
--spec foreach(foreach_function(), sql(), [bind_values()], connection()) -> ok.
+-spec foreach(foreach_function(), sql(), [bind_value()], connection()) -> ok.
 foreach(F, Sql, Args, Connection) ->
     foreach(F, Sql, Args, Connection, ?DEFAULT_TIMEOUT).
 
 
 %% @doc Execute a function for all rows returned by the SQL query `Sql'.
-%% @param A function that takes either one parameter (a row tuple) or two
-%%   (a column name tuple and a row tuple). Return values are ignored.
+%% @param A function that takes either one parameter (a row) or two
+%%   (a column name list and a row). Return values are ignored.
 %% @param Sql an SQL query
 %% @param Args values that are bound to `Sql'
 %% @throws sqlite_error()
--spec foreach(foreach_function(), sql(), [bind_values()], connection(), timeout()) -> ok.
+-spec foreach(foreach_function(), sql(), [bind_value()], connection(), timeout()) -> ok.
 foreach(F, Sql, Args, Connection, Timeout) ->
     case prepare_bind(Sql, Args, Connection, Timeout) of
         {ok, Statement} ->
@@ -778,7 +780,7 @@ foreach(F, Sql, Args, Connection, Timeout) ->
 
 %% @doc Run function for each row
 %% @private
--spec foreach_s(foreach_function(), statement(), tuple(), timeout()) -> ok.
+-spec foreach_s(foreach_function(), statement(), [binary()], timeout()) -> ok.
 foreach_s(F, Statement, ColNames, Timeout) when is_function(F, 1) ->
     case fetch_one(Statement, Timeout) of
         {ok, nil} -> ok;

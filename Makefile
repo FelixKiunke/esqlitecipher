@@ -28,7 +28,7 @@ distclean:
 
 # dializer
 
-build-plt:
+build-plt: .$(PROJECT).plt
 	@$(DIALYZER) --build_plt --output_plt .$(PROJECT).plt \
 		--apps kernel stdlib
 
