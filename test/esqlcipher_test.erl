@@ -528,7 +528,7 @@ test_suite() -> [
         {"sqlite_version", ?_test(begin
             {ok, Stmt} = esqlcipher:prepare("select sqlite_version() as sqlite_version;", Db),
             [<<"sqlite_version">>] =  esqlcipher:column_names(Stmt),
-            ?assertEqual({ok, [<<"3.33.0">>]}, esqlcipher:fetch_one(Stmt)),
+            ?assertEqual({ok, [<<"3.36.0">>]}, esqlcipher:fetch_one(Stmt)),
             ok
         end)}
     end,
@@ -537,7 +537,7 @@ test_suite() -> [
         {"sqlcipher_version", ?_test(begin
             {ok, Stmt} = esqlcipher:prepare("PRAGMA cipher_version;", Db),
             [<<"cipher_version">>] =  esqlcipher:column_names(Stmt),
-            ?assertEqual({ok, [<<"4.4.2 community">>]}, esqlcipher:fetch_one(Stmt)),
+            ?assertEqual({ok, [<<"4.5.0 community">>]}, esqlcipher:fetch_one(Stmt)),
             ok
         end)}
     end,
@@ -546,7 +546,7 @@ test_suite() -> [
         {"sqlite_source_id", ?_test(begin
             {ok, Stmt} = esqlcipher:prepare("select sqlite_source_id() as sqlite_source_id;", Db),
             [<<"sqlite_source_id">>] =  esqlcipher:column_names(Stmt),
-            ?assertEqual({ok, [<<"2020-08-14 13:23:32 fca8dc8b578f215a969cd899336378966156154710873e68b3d9ac5881b0alt1">>]}, esqlcipher:fetch_one(Stmt)),
+            ?assertEqual({ok, [<<"2021-06-18 18:36:39 5c9a6c06871cb9fe42814af9c039eb6da5427a6ec28f187af7ebfb62eafaalt1">>]}, esqlcipher:fetch_one(Stmt)),
             ok
         end)}
     end
