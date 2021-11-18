@@ -1,7 +1,7 @@
 %% @author Maas-Maarten Zeeman <mmzeeman@xs4all.nl>
 %% @author Felix Kiunke <dev@fkiunke.de>
 %% @copyright 2011 - 2021 Maas-Maarten Zeeman, Felix Kiunke
-%% @version 1.2.0
+%% @version 2.0.0-rc.2
 
 %% @doc Erlang API for sqlite3 and sqlcipher databases.
 %% This is an adaptation of Maas-Maarten Zeeman's esqlite package for
