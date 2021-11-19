@@ -1,7 +1,7 @@
 %% @author Maas-Maarten Zeeman <mmzeeman@xs4all.nl>
 %% @author Felix Kiunke <dev@fkiunke.de>
 %% @copyright 2011 - 2021 Maas-Maarten Zeeman, Felix Kiunke
-%% @version 2.0.0-rc.2
+%% @version 2.0.0-rc.3
 
 %% @doc Low level erlang API for sqlite3 databases.
 %% The actual work happens in an asynchronous low level thread that is started

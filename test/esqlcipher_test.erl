@@ -110,7 +110,6 @@ test_suite() -> [
                     [[1], [2]] = esqlcipher:q("SELECT val FROM test LIMIT 2;", Db2)
             end,
             ok = esqlcipher:close(Db2),
-            file:write_file("/Users/Felix/git/esqlcipher/test.txt", "hallo"),
             ok
         end)}
     end,
@@ -172,11 +171,11 @@ test_suite() -> [
             ok = esqlcipher:set_update_hook(self(), Db),
             ok = esqlcipher:exec("CREATE TABLE test (id INTEGER PRIMARY KEY, val STRING);", Db),
             ok = esqlcipher:exec("INSERT INTO test (val) VALUES ('this is a test');", Db),
-            ok = receive {insert, "test", 1} -> ok after 150 -> no_message end,
+            ok = receive {insert, <<"main">>, <<"test">>, 1} -> ok after 150 -> no_message end,
             ok = esqlcipher:exec("UPDATE test SET val = 'a new test' WHERE id = 1;", Db),
-            ok = receive {update, "test", 1} -> ok after 150 -> no_message end,
+            ok = receive {update, <<"main">>, <<"test">>, 1} -> ok after 150 -> no_message end,
             ok = esqlcipher:exec("DELETE FROM test WHERE id = 1;", Db),
-            ok = receive {delete, "test", 1} -> ok after 150 -> no_message end,
+            ok = receive {delete, <<"main">>, <<"test">>, 1} -> ok after 150 -> no_message end,
             ok
         end)}
     end,

@@ -346,7 +346,11 @@ update_callback(void *arg, int sqlite_operation_type, char const *sqlite_databas
 {
     esqlcipher_connection *db = (esqlcipher_connection *)arg;
     esqlcipher_command *cmd = NULL;
-    ERL_NIF_TERM type, table, rowid;
+    ERL_NIF_TERM type, database, table, rowid;
+    size_t len;
+    unsigned char *bin_database;
+    unsigned char *bin_table;
+
     cmd = command_create();
 
     if (db == NULL)
@@ -356,7 +360,14 @@ update_callback(void *arg, int sqlite_operation_type, char const *sqlite_databas
 	    return;
 
     rowid = enif_make_int64(cmd->env, sqlite_rowid);
-    table = enif_make_string(cmd->env, sqlite_table, ERL_NIF_LATIN1);
+
+    len = strlen(sqlite_database);
+    bin_database = enif_make_new_binary(cmd->env, len, &database);
+    memcpy(bin_database, sqlite_database, len);
+
+    len = strlen(sqlite_table);
+    bin_table = enif_make_new_binary(cmd->env, len, &table);
+    memcpy(bin_table, sqlite_table, len);
 
     switch(sqlite_operation_type) {
         case SQLITE_INSERT:
@@ -372,7 +383,7 @@ update_callback(void *arg, int sqlite_operation_type, char const *sqlite_databas
             return;
     }
     cmd->type = cmd_notification;
-    cmd->arg = enif_make_tuple3(cmd->env, type, table, rowid);
+    cmd->arg = enif_make_tuple4(cmd->env, type, database, table, rowid);
     push_command(cmd->env, db, cmd);
 }
 
@@ -743,7 +754,8 @@ do_reset(ErlNifEnv *env, sqlite3 *db, sqlite3_stmt *stmt, const ERL_NIF_TERM arg
 static ERL_NIF_TERM
 do_column_names(ErlNifEnv *env, sqlite3_stmt *stmt)
 {
-    int i, size, len;
+    int i, size;
+    size_t len;
     const char *name;
     unsigned char *binname;
     ERL_NIF_TERM *array;
@@ -781,7 +793,8 @@ do_column_names(ErlNifEnv *env, sqlite3_stmt *stmt)
 static ERL_NIF_TERM
 do_column_types(ErlNifEnv *env, sqlite3_stmt *stmt)
 {
-    int i, size, len;
+    int i, size;
+    size_t len;
     const char *type;
     unsigned char *bintype;
     ERL_NIF_TERM *array;

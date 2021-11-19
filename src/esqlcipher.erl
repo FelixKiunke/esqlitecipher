@@ -1,7 +1,7 @@
 %% @author Maas-Maarten Zeeman <mmzeeman@xs4all.nl>
 %% @author Felix Kiunke <dev@fkiunke.de>
 %% @copyright 2011 - 2021 Maas-Maarten Zeeman, Felix Kiunke
-%% @version 2.0.0-rc.2
+%% @version 2.0.0-rc.3
 
 %% @doc Erlang API for sqlite3 and sqlcipher databases.
 %% This is an adaptation of Maas-Maarten Zeeman's esqlite package for
@@ -308,10 +308,13 @@ set_update_hook(Pid, Connection) ->
     set_update_hook(Pid, Connection, ?DEFAULT_TIMEOUT).
 
 %% @doc Subscribe to notifications for row updates, insertions and deletions.
-%% Messages will come in the shape of `{Action, Table :: string(), Id :: integer()}',
+%% Messages will come in the shape of
+%% `{Action, Database :: binary(), Table :: binary(), Id :: integer()}',
 %% where `Action' will be either `insert', `update' or `delete' and `Id' will be
 %% the affected row id (i.e. the `INTEGER PRIMARY KEY' if the table has one).
--spec set_update_hook(pid(), connection(), timeout()) -> ok.
+%% `Database' contains the name of the database on which the update occurred,
+%% usually `main'.
+-spec set_update_hook(pid(), Connection :: connection(), timeout()) -> ok.
 set_update_hook(Pid, {connection, Connection, _}, Timeout) ->
     Ref = make_ref(),
     ok = esqlcipher_nif:set_update_hook(Connection, Ref, self(), Pid),
